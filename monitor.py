@@ -1,7 +1,6 @@
 """
 22 Mar 2013
 
-sacct -u fjserra   -oJobID,State,CPUTime -s r,cd
 
 """
 
@@ -16,7 +15,6 @@ from select     import select
 
 CMD = '/opt/perf/bin/squeue -o "%a %u %i %j %T %M %l %C %D %q %P %p %R"'
 
-# LOGPATH = '/home/devel/fjserra/queue/jobs/'
 
 BEGTIME = time() # in the begining of time...
 
@@ -86,9 +84,6 @@ def print_stats(jobs, users, width=80, # jobsname=None,
             runtime = get_time(subjobs(grpjobs, 'STATE', 'RUNNING'),
                                kind='TIME', tround='m')
             njobs = (running + pending + doneing + cmpling) or 1
-            # if jobsname and user == 'fjserra':
-            #     njobs = get_full_job_list(jobsname)
-            #     doneing = njobs - (running + pending)
             factor = float(width) / njobs
             name = '%-12s' % (user.upper())
             #cnt = int(log(running + pending)) if (running + pending) else 0
