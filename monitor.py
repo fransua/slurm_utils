@@ -242,10 +242,10 @@ def color_bar(name, width=8):
     while cnt < lname:
         let = name[cnt]
         if let.isupper():
-            out += '\033[7;36m' + let + '\033[m'
+            out += '\033[7;30;4;41m' + let + '\033[m'
             cnt += 1
         else:
-            out += '\033[7;37m'
+            out += '\033[7;30;43m'
             while cnt < lname:
                 let = name[cnt]
                 if let.isupper():
@@ -274,9 +274,9 @@ Help:
     system('tput civis')
     getch = _Getch()
     toreload  = True
-    print ("\033[7;37m   \033[m" +
+    print ("\033[7;30;43m   \033[m" +
            ("%s " * 8 + "%s") % tuple([color_bar(o) for o in sorted(options)]) +
-           "\033[7;37m  \033[m")
+           "\033[7;30;43m  \033[m")
     while True:
         s = getch(opts.refresh).lower()
         stdout.flush()
