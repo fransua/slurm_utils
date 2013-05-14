@@ -19,8 +19,8 @@ CMD = '/opt/perf/bin/squeue -o "%a %u %i %j %T %M %l %C %D %q %P %p %R"'
 
 BEGTIME = time() # in the begining of time...
 
-TIME_ROUND = 60000 # used for grouping jobs by time (600 corresponds to +- 5 min)
 
+TIME_ROUND = 15000 # used to group jobs by time (600 corresponds to +- 5 min)
 
 def subjobs(jobs, field, val, inverse=False, test=None):
     """
@@ -51,35 +51,47 @@ def get_list():
 
 def print_stats(jobs, users, width=80, # jobsname=None,
                 groupby=None, indices=False):
-    out = 'SLURM monitor (uptime %s)\n\n' % (time2string(int(time()-BEGTIME)))
+    grp_time = '(groups: +- %s)' % (time2str(TIME_ROUND / 2,
+                                               tround='m') if groupby else '')
+    out = 'SLURM monitor (uptime %s) %s\n\n' % (time2str(int(time() - BEGTIME)),
+                                                grp_time)
     indx = 0
     for user in users + (['total'] if len(users) else []):
         userjobs = jobs if user == 'total' else subjobs(jobs, 'USER', user)
+        round_time = lambda x: (totime(userjobs[x][groupby]) / TIME_ROUND)
         #
         groups = []
-        if groupby == 'TIMELIMIT' and not user=='total': # grouby timelimit with 10 minute precisison
-            groups = set([(totime(userjobs[j][groupby])/TIME_ROUND) for j in userjobs])
+         # grouby timelimit with +- TIME_ROUND/2 precisison
+        if groupby == 'TIMELIMIT' and not user=='total':
+            groups = set([round_time(j) for j in userjobs])
             groups = sorted([t for t in groups])
         else:
             groups = [None]
         for grp in groups:
             if grp > -1:
                 grpjobs = subjobs(userjobs, 'TIMELIMIT', grp,
-                                  test=lambda x, y: totime(x)/TIME_ROUND==y)
+                                  test=lambda x, y: totime(x) / TIME_ROUND == y)
             else:
                 grpjobs = userjobs
-            paused = check_pause(grpjobs)
+            paused = check_pause(grpjobs) if user!='total' else False
             if indices and user!='total':
                 print '  [%2s] %12s %10s %s' % (
-                    indx, user, time2string(grp * TIME_ROUND * 1.5, tround='m')
-                    if grp else 'ALL', '(paused)' if paused else '')
+                    indx, user, time2str(int(TIME_ROUND * (grp + 1.5)),
+                                         tround='m')
+                    if grp > -1 else 'ALL', '(paused)' if paused else '')
                 indx += 1
                 yield grpjobs
-            running = count_procs(subjobs(grpjobs, 'STATE'           , 'RUNNING'     ))
-            cmpling = count_procs(subjobs(grpjobs, 'STATE'           , 'COMPLETING'  ))
-            pending = count_procs(subjobs(grpjobs, 'STATE'           , 'PENDING'     ))
-            dependy = count_procs(subjobs(grpjobs, 'NODELIST(REASON)', '(Dependency)'))
-            doneing = count_procs(subjobs(grpjobs, 'STATE'           , 'DONE'        ))
+            running = subjobs(grpjobs, 'STATE'           , 'RUNNING'     )
+            cmpling = subjobs(grpjobs, 'STATE'           , 'COMPLETING'  )
+            pending = subjobs(grpjobs, 'STATE'           , 'PENDING'     )
+            dependy = subjobs(grpjobs, 'NODELIST(REASON)', '(Dependency)')
+            doneing = subjobs(grpjobs, 'STATE'           , 'DONE'        )
+            #
+            running = count_procs(running)
+            cmpling = count_procs(cmpling)
+            pending = count_procs(pending)
+            dependy = count_procs(dependy)
+            doneing = count_procs(doneing)
             #
             avgtime = get_time(grpjobs, tround='m')
             runtime = get_time(subjobs(grpjobs, 'STATE', 'RUNNING'),
@@ -112,7 +124,8 @@ def single_stats(running, pending, dependy, cmpling, done, avgtime,
             'done:\033[0;32m%-5s\033[m limit:%s ' + 
             'spent:%s\n') % (running, cmpling, pending, dependy, done, 
                              avgtime, runtime)
-    out += '%-12s' % (('  ~' + time2string(grp * TIME_ROUND + TIME_ROUND / 2, tround='m'))
+    out += '%-12s' % (('  ~' + time2str(grp * TIME_ROUND + TIME_ROUND / 2,
+                                        tround='m'))
                       if grp > -1 else '')
     ## summing up remaining of floats and finding where to put it
     restr = ((factor * (running)           * 10)%10)/10
@@ -157,13 +170,13 @@ def totime(timestr):
         times = [0] + times
     try:
         times = [int(t) if not 'N' in str(t) else 0 for t in times]
-        return times[0] * 24 *60 * 60 + times[1] *60 *60 + times[2] * 60
+        return int(times[0] * 24 * 60 * 60 + times[1] *60 *60 + times[2] * 60)
     except Exception as e:
         print e, times
         exit()
 
 
-def time2string(seconds, tround='s'):
+def time2str(seconds, tround='s'):
     if tround == 'm' and seconds%60 >= 30:
         seconds+= 60 - seconds%60
     days    = (seconds / (60*60*24))
@@ -180,7 +193,7 @@ def time2string(seconds, tround='s'):
 def get_time(jobs, kind='TIMELIMIT', tround='s'):
     times = sum([totime(jobs[j][kind]) for j in jobs])
     try:
-        return time2string(int(float(times) / len(jobs)), tround)
+        return time2str(int(float(times) / len(jobs)), tround)
     except ZeroDivisionError:
         return 0
 
@@ -229,14 +242,16 @@ def pause_jobs(job_list, paused=True):
 
 
 def check_pause(job_list):
-    return 'JobHeldUser' in job_list.values()[0]['NODELIST(REASON)']
+    return '(JobHeldUser)' in [job_list[j]['NODELIST(REASON)'] \
+                               for j in job_list]
 
 
 
 def color_bar(name, width=8):
     lname = len(name)
     out = ''
-    name = ' ' * ((width - lname)/2 + (width - lname)%2) + name + ' ' * ((width - lname)/2)
+    name =  ' ' * ((width - lname) / 2 + (width - lname) % 2) + name
+    name += ' ' * ((width - lname) / 2)
     lname = len(name)
     cnt = 0
     while cnt < lname:
@@ -257,6 +272,7 @@ def color_bar(name, width=8):
 
 
 def console(opts, jobs, users):
+    global TIME_ROUND
     help_s = """
 Help:
 ******
@@ -270,7 +286,8 @@ Help:
   * p: suspend/resume list of jobs
   * q: quit
 """ % (getuser())
-    options = ['Clean done ', 'reFresh rate', 'Group', 'Help', 'Kill', 'Pause/Play', 'Quit', 'Reload', 'Width']
+    options = ['Clean done ', 'reFresh rate', 'Group', 'Help',
+               'Kill', 'Pause/Play', 'Quit', 'Reload', 'Width']
     system('tput civis')
     getch = _Getch()
     toreload  = True
@@ -295,7 +312,13 @@ Help:
             raise KeyboardInterrupt
         elif s == 'w':
             width = raw_input('new width (actual=%s): ' % opts.width)
-            width = int(width)
+            try:
+                width = int(width)
+            except ValueError:
+                print 'Integer needed...\n nothing done\n'
+                sleep(1)
+                toreload  = False
+                break
             opts.width = 78 if width < 78 else width
             toreload  = False
             break
@@ -308,13 +331,32 @@ Help:
                                 ' - None     : write anything\n}:---> ')
             groupby = groupby.strip()
             opts.groupby = 'TIMELIMIT' if groupby in ['time'] else None
+            if not groupby == 'time':
+                toreload  = False
+                break
+            time_round = raw_input((' Group by time period of (actual=%s min):' +
+                                    ' ') % (TIME_ROUND / 60))
+            try:
+                time_round = int(time_round) * 60
+            except ValueError:
+                print 'Integer needed...\n nothing done\n'
+                sleep(1)
+                toreload  = False
+                break
+            TIME_ROUND = time_round
             toreload  = False
             break
         elif s == 'f':
             system('tput cnorm')
             refresh = raw_input('new refresh rate (actual=' +
                                 '%s minutes): ' % (opts.refresh/60))
-            refresh = int(float(refresh) * 60)
+            try:
+                refresh = int(float(refresh) * 60)
+            except ValueError:
+                print 'Integer needed...\n nothing done\n'
+                sleep(1)
+                toreload  = False
+                break
             opts.refresh = 10 if refresh < 10 else refresh
             toreload  = False
             break
@@ -332,9 +374,22 @@ Help:
                               count_procs(groups[int(tokill)])))
             if kill == 'y' or kill == 'yes':
                 print 'bang bang!'
-                kill_jobs(groups[int(tokill)])
+                try:
+                    kill_jobs(groups[int(tokill)])
+                except ValueError:
+                    print 'Integer needed...\n nothing done\n'
+                    sleep(1)
+                    toreload  = False
+                    break
+                except IndexError:
+                    print 'Bad group number\n'
+                    sleep(1)
+                    toreload  = False
+                    break
             else:
                 print 'aborted...'
+                sleep(1)
+                toreload  = False
             break
         elif s == 'p':
             system('tput cnorm')
@@ -342,14 +397,19 @@ Help:
             print '%-9s %9s %s' % ('id_jobs', 'user', opts.groupby)
             groups = list(print_stats(jobs, [getuser()], width=80,
                                       groupby=opts.groupby, indices=True))
-            topause = raw_input('\nEnter the "id_jobs" number to pause/suspend all ' +
-                                'corresponding jobs\n}:---> ')
+            topause = raw_input('\nEnter the "id_jobs" number to pause/' +
+                                'suspend all corresponding jobs\n}:---> ')
             try:
                 pause = check_pause(groups[int(topause)])
             except ValueError:
-                print 'aborted...'
+                print 'Integer needed...\n nothing done\n'
+                sleep(1)
                 break
-            pause_jobs(groups[int(topause)], pause)
+            try:
+                pause_jobs(groups[int(topause)], pause)
+            except IndexError:
+                print 'Not valid group number\n'
+                sleep(1)
             break
     if toreload:
         print 'reloading...'
@@ -376,8 +436,10 @@ def main():
                 users = [opts.user]
             else:
                 users = sorted(list(set([jobs[j]['USER'] for j in jobs])))
-            list(print_stats(jobs, users, width=opts.width, # jobsname=opts.jobsname,
-                             groupby=opts.groupby)) # put list here because of yield inside... not nice
+            # put list here because of yield inside... not nice
+            list(print_stats(jobs, users, width=opts.width,
+                             # jobsname=opts.jobsname,
+                             groupby=opts.groupby))
             if not opts.watch:
                 break
             toreload = console(opts, jobs, users)
@@ -405,7 +467,7 @@ def get_options():
                       help='[%default] job stats.')
     # parser.add_option('--jobs', action='store', default=None,
     #                   dest='jobsname',
-    #                   help='Job name to search for in log (only for francois).')
+    #                   help='Job name to search for in log.')
     parser.add_option('--watch', action='store_true', default=False,
                       dest='watch', help='[%default] watch (ctrl-c to quit).')
     parser.add_option('--refresh', action='store', default=10,
@@ -414,7 +476,8 @@ def get_options():
                             'used with watch'))
     parser.add_option('--groupby', action='store', default=None,
                       dest='groupby',
-                      help=('[%default] group user jobs by time limit (groupby=time).'))
+                      help=('[%default] group user jobs by time limit ' +
+                            '(groupby=time).'))
     parser.add_option('--width', action='store', default=82,
                       dest='width',
                       help='[%default] display width (should be > 80)')
@@ -430,13 +493,15 @@ def bye():
     return ['\n Bye-bye\n', '\n Talogo!!\n', '\n Have a nice day\n',
             '\n And they lived happily ever after and they had a lot of CPUs\n',
             '\n The End.\n', '\n Au revoir\n', 
-            '\n Nooooo come back!!!! Quick!!\n', '\n Thanks.. I really enjoyed\n',
+            '\n Nooooo come back!!!! Quick!!\n',
+            '\n Thanks.. I really enjoyed\n',
             "\n I'm a poor lonesome cowboy, and a long way from home...\n",
-            '\n Flying Spaghetti Monster be with you.\n'] [int (str (time())[-1])]
+            '\n Flying Spaghetti Monster be with you.\n'] [int(str(time())[-1])]
 
 
 class _Getch:
-    """Gets a single character from standard input.  Does not echo to the screen."""
+    """Gets a single character from standard input.
+    Does not echo to the screen."""
     def __init__(self):
         self.impl = _GetchUnix()
 
@@ -450,17 +515,23 @@ class _GetchUnix:
 
     def __call__(self, refresh):
         import tty, termios
-        fd = stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setraw(stdin.fileno())
-            rlist, _, _ = select([stdin], [], [], refresh)
-            if not rlist:
-                return 'rr'
-            ch = stdin.read(1)
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        return ch
+        while True:
+            fd = stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setraw(stdin.fileno())
+                rlist, _, _ = select([stdin], [], [], refresh)
+                if not rlist:
+                    return 'rr'
+                ch = stdin.read(1)
+                if not ch.isalpha():
+                    # if we have an arrow
+                    if ch == "\x1B":
+                        stdin.read(2)
+                    continue
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            return ch
 
 
 # def get_full_job_list(jobsname):

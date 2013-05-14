@@ -51,6 +51,8 @@ def main():
                 name = opts.array
             cmd  = ' '.join(cmds)
             time = opts.time
+        if name.startswith('-') or name.startswith('.') or name.startswith('+'):
+            name = '_' + name[1:]
         cls = 'lowprio' if int(time.split(':')[0]) > 24 else 'normal'
         mem = ('# @ memory           = ' + 
                '{}'.format(opts.memory) if opts.memory else '')
