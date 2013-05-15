@@ -8,6 +8,7 @@ INFILE:
 
 from random   import random
 from string   import lowercase
+from time import sleep
 import os
 from optparse import OptionParser
 
@@ -66,6 +67,9 @@ def main():
         out.close()
         if opts.norun:
             return
+        if not i % 10:
+            print 'pause...'
+            sleep(1)
         os.system('mnsubmit ' + PATH + 'lala_'+str(i)+'.cmd')
 
 
