@@ -198,7 +198,7 @@ def get_time(jobs, kind='TIMELIMIT', tround='s'):
         return 0
 
 
-def clean_done_users(jobs, users):
+def clean_done_users(jobs, users, groupby=None):
     """
     check if some user has no running neither pending jobs, and remove it from
     the main dict.
@@ -210,12 +210,23 @@ def clean_done_users(jobs, users):
     """
     for user in users:
         userjobs = subjobs(jobs, 'USER', user)
-        cnt  = count_procs(subjobs(userjobs, 'STATE', 'RUNNING'))
-        cnt += count_procs(subjobs(userjobs, 'STATE', 'PENDING'))
-        if cnt:
-            continue
-        for j in jobs.keys():
-            if jobs[j]['USER'] == user:
+        round_time = lambda x: (totime(userjobs[x][groupby]) / TIME_ROUND)
+        if groupby == 'TIMELIMIT' and not user=='total':
+            groups = set([round_time(j) for j in userjobs])
+            groups = sorted([t for t in groups])
+        else:
+            groups = [None]
+        for grp in groups:
+            if grp > -1:
+                grpjobs = subjobs(userjobs, 'TIMELIMIT', grp,
+                                  test=lambda x, y: totime(x) / TIME_ROUND == y)
+            else:
+                grpjobs = userjobs
+            cnt  = count_procs(subjobs(grpjobs, 'STATE', 'RUNNING'))
+            cnt += count_procs(subjobs(grpjobs, 'STATE', 'PENDING'))
+            if cnt:
+                continue
+            for j in subjobs(grpjobs, 'STATE', 'DONE'):
                 del(jobs[j])
 
 
@@ -286,7 +297,7 @@ Help:
   * p: suspend/resume list of jobs
   * q: quit
 """ % (getuser())
-    options = ['Clean done ', 'reFresh rate', 'Group', 'Help',
+    options = ['Clear done ', 'reFresh rate', 'Group', 'Help',
                'Kill', 'Pause/Play', 'Quit', 'Reload', 'Width']
     system('tput civis')
     getch = _Getch()
@@ -305,7 +316,7 @@ Help:
         elif s == 'h':
             print help_s
         elif s == 'c':
-            clean_done_users(jobs, users)
+            clean_done_users(jobs, users, opts.groupby)
             toreload  = False
             break
         elif s == 'q':
@@ -324,11 +335,12 @@ Help:
             break
         elif s == 'g':
             system('tput cnorm')
-            groupby = raw_input('group user jobs by a feature ' +
-                                '(actual: %s):\n' % opts.groupby +
-                                ' - TIMELIMIT: write "time" ' +
-                                '(10 minute precision)\n'
-                                ' - None     : write anything\n}:---> ')
+            groupby = raw_input(('group user jobs by a feature ' +
+                                 '(actual: %s):\n' % opts.groupby +
+                                 ' - TIMELIMIT: write "time" ' +
+                                 '(%s minute precision)\n'
+                                 ' - None     : write anything\n' +
+                                 '}:-> ') % (TIME_ROUND / 60))
             groupby = groupby.strip()
             opts.groupby = 'TIMELIMIT' if groupby in ['time'] else None
             if not groupby == 'time':
@@ -367,7 +379,7 @@ Help:
             groups = list(print_stats(jobs, [getuser()], width=80,
                                       groupby=opts.groupby, indices=True))
             tokill = raw_input('\nEnter the "id_jobs" number to kill all ' +
-                               'corresponding jobs\n}:---> ')
+                               'corresponding jobs\n}:-> ')
             kill = raw_input('**********\n  You selected to kill ' +
                              '%s jobs occupying %s CPUs [y|n]: ' %
                              (len(groups[int(tokill)]),
@@ -398,7 +410,7 @@ Help:
             groups = list(print_stats(jobs, [getuser()], width=80,
                                       groupby=opts.groupby, indices=True))
             topause = raw_input('\nEnter the "id_jobs" number to pause/' +
-                                'suspend all corresponding jobs\n}:---> ')
+                                'suspend all corresponding jobs\n}:-> ')
             try:
                 pause = check_pause(groups[int(topause)])
             except ValueError:
@@ -470,7 +482,7 @@ def get_options():
     #                   help='Job name to search for in log.')
     parser.add_option('--watch', action='store_true', default=False,
                       dest='watch', help='[%default] watch (ctrl-c to quit).')
-    parser.add_option('--refresh', action='store', default=10,
+    parser.add_option('--refresh', action='store', default=30,
                       dest='refresh',
                       help=('[%default] refresh rate in MINUTES,' +
                             'used with watch'))
