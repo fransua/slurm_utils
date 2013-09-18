@@ -112,7 +112,7 @@ def get_options():
                       help='Name of the job in the input file (last arg).')
     parser.add_option('--time', action='store',
                       dest='time', default='20:00:00',
-                      help='''Maximum run time alowed.''')
+                      help='''[%default] Maximum run time alowed.''')
     parser.add_option('--cpus', action='store',
                       dest='cpus', default='1',
                       help='''Number of CPUs per tasks''')
