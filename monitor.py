@@ -140,23 +140,33 @@ def single_stats(running, pending, dependy, cmpling, done, avgtime,
     Returns one item (2 lines).
     """
     if verbose == 2:
-        avgprio = '|prio:%s(%s-%s)' % (str(round(avgprio[0]*1000, 3)),
+        sprio = '|prio:%s(%s-%s)' % (str(round(avgprio[0]*1000, 3)),
                                        str(round(avgprio[1]*1000, 3)),
                                        str(round(avgprio[2]*1000, 3)))
     else:
-        avgprio = ''
+        sprio = ''
     def get_bar(prio):
         for s in '|' * (running + pending + dependy + cmpling + done - len(prio)-1) + prio + '|':
             yield s
-    priobar = get_bar(avgprio)
+    priobar = get_bar(sprio)
     out = ''
-    out += (   'run:\033[0;31m%-3s\033[m ' +
-               'compl:\033[0;35m%-5s\033[m ' + 
-               'pend:\033[0;33m%-5s\033[m ' + 
-            '(depn:\033[1;30m%-5s\033[m) ' + 
-            'done:\033[0;32m%-5s\033[m limit:%s ' + 
-            'spent:%s\n') % (running, cmpling, pending, dependy, done, 
-                             avgtime, runtime)
+    if verbose == 2:
+        out += ('run:\033[0;31m%-3s\033[m ' +
+                'compl:\033[0;35m%-2s\033[m ' + 
+                'pend:\033[0;33m%-5s\033[m ' + 
+                '(dep:\033[1;30m%-5s\033[m) ' + 
+                'end:\033[0;32m%-5s\033[m time-max:%s ' + 
+                'time-av:%s\n') % (running, cmpling, pending, dependy, done,
+                                    avgtime, runtime)
+    else:
+        out += ('run:\033[0;31m%-3s\033[m ' +
+                'compl:\033[0;35m%-2s\033[m ' + 
+                'pend:\033[0;33m%-5s\033[m ' + 
+                '(dep:\033[1;30m%-5s\033[m) ' + 
+                'end:\033[0;32m%-5s\033[m time:~%s<%s'+
+                ' prio:%s\n') % (
+            running, cmpling, pending, dependy, done, runtime, avgtime,
+            round(avgprio[2]*1000, 3))        
     if verbose:
         out += '%-12s' % (('  ~' + time2str(int(TIME_ROUND * (grp + 1.5)),
                                             tround='m'))
@@ -180,7 +190,9 @@ def single_stats(running, pending, dependy, cmpling, done, avgtime,
                 ''.join(['\033[0;35m%s\033[m' % (priobar.next()) for i in xrange(cmpling)]) +
                 ''.join(['\033[0;33m%s\033[m' % (priobar.next()) for i in xrange(pending)]) +
                 ''.join(['\033[1;30m%s\033[m' % (priobar.next()) for i in xrange(dependy)]) +
-                ''.join(['\033[0;32m%s\033[m' % (priobar.next()) for i in xrange(done)])) + '\n\n'
+                ''.join(['\033[0;32m%s\033[m' % (priobar.next()) for i in xrange(done)])) + '\n'
+        if verbose == 2:
+            out += '\n'
     if paused:
         for let in 'PAUSED-':
             out = out.replace('|', let, 1)
