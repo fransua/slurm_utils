@@ -358,8 +358,8 @@ Help:
   * p: suspend/resume list of jobs
   * q: quit
 """ % (getuser())
-    options = ['Clear done ', 'reFresh rate', 'Group', 'Help',
-               'Kill', 'Pause/Play', 'Quit', 'Reload', 'Width']
+    options = [' More/Less ', 'reFresh rate', 'Group', 'Help',
+               'Kill', 'Pause/Play', 'Quit', 'Reload', 'Clean']
     system('tput civis')
     getch = _Getch()
     toreload  = True
@@ -450,7 +450,7 @@ Help:
             toreload  = False
             break
         elif s == 'k':
-            blanks = ' ' * 33
+            blanks = ' ' * 42
             print blanks + '\033[7;30;43m \033[m'
             groups = list(print_stats(jobs, [getuser()], width=80,
                                       groupby=opts.groupby, indices=True,
@@ -481,7 +481,7 @@ Help:
                 toreload  = False
             break
         elif s == 'p':
-            blanks = " " * 42
+            blanks = " " * 51
             print blanks + '\033[7;30;43m \033[m'
             groups = list(print_stats(jobs, [getuser()], width=80,
                                       groupby=opts.groupby, indices=True,
@@ -506,7 +506,8 @@ Help:
                 sleep(1)
             break
         else:
-            print s
+            toreload = False
+            break
     if toreload:
         print 'reloading...'
         return True
