@@ -244,7 +244,10 @@ def get_time(jobs, kind='TIMELIMIT', tround='s', calc='avg'):
         if calc=='avg':
             return time2str(int(float(sum(times)) / len(jobs)), tround)
         elif calc == 'max':
-            return time2str(int(float(max(times))), tround)
+            if len(jobs):
+                return time2str(int(float(max(times))), tround)
+            else:
+                return 0
     except ZeroDivisionError:
         return 0
 
