@@ -111,6 +111,8 @@ def print_stats(jobs, users, width=80, verbose=2, # jobsname=None,
             doneing = count_procs(doneing)
             #
             avgtime = get_time(grpjobs, tround='m')
+            maxtime = get_time(subjobs(grpjobs, 'STATE', 'RUNNING'),
+                               kind='TIME', tround='m', calc='max')
             runtime = get_time(subjobs(grpjobs, 'STATE', 'RUNNING'),
                                kind='TIME', tround='m')
             #
@@ -127,15 +129,15 @@ def print_stats(jobs, users, width=80, verbose=2, # jobsname=None,
                 name = name.lower()
             out += ''.join(name)
             out += single_stats(running, pending, dependy, cmpling, doneing, 
-                                avgtime, runtime, factor, grp, paused, avgprio,
-                                verbose)
+                                avgtime, runtime, maxtime, factor, grp, paused,
+                                avgprio, verbose)
     if not indices:
         system('clear')
         stdout.write(out)
     
 
-def single_stats(running, pending, dependy, cmpling, done, avgtime,
-                 runtime, factor, grp, paused, avgprio, verbose):
+def single_stats(running, pending, dependy, cmpling, done, avgtime, runtime,
+                 maxtime, factor, grp, paused, avgprio, verbose):
     """
     Returns one item (2 lines).
     """
@@ -155,9 +157,9 @@ def single_stats(running, pending, dependy, cmpling, done, avgtime,
                 'compl:\033[0;35m%-2s\033[m ' + 
                 'pend:\033[0;33m%-5s\033[m ' + 
                 '(dep:\033[1;30m%-5s\033[m) ' + 
-                'end:\033[0;32m%-5s\033[m time-max:%s ' + 
-                'time-av:%s\n') % (running, cmpling, pending, dependy, done,
-                                    avgtime, runtime)
+                'end:\033[0;32m%-5s\033[m time:~%s(.-%s)' + 
+                '<%s\n') % (running, cmpling, pending, dependy, done,
+                            runtime, maxtime, avgtime)
     else:
         out += ('run:\033[0;31m%-3s\033[m ' +
                 'compl:\033[0;35m%-2s\033[m ' + 
@@ -236,10 +238,13 @@ def time2str(seconds, tround='s'):
     return '%s-%02d:%02d:%02d' % (days, hours, minutes, seconds)
 
 
-def get_time(jobs, kind='TIMELIMIT', tround='s'):
-    times = sum([totime(jobs[j][kind]) for j in jobs])
+def get_time(jobs, kind='TIMELIMIT', tround='s', calc='avg'):
+    times = [totime(jobs[j][kind]) for j in jobs]
     try:
-        return time2str(int(float(times) / len(jobs)), tround)
+        if calc=='avg':
+            return time2str(int(float(sum(times)) / len(jobs)), tround)
+        elif calc == 'max':
+            return time2str(int(float(max(times))), tround)
     except ZeroDivisionError:
         return 0
 
@@ -357,6 +362,12 @@ Help:
   * k: kill list of jobs (only for user %s)
   * p: suspend/resume list of jobs
   * q: quit
+
+Reading time: time:~MEANTIME(.-MAXTIME)<LIMTIME, where, MEANTIME is the mean
+              time of your running jobs; MAXTIME the time spent by your longest
+              job; and LIMTIME the mean time limit set.
+Reading prio: prio:MEANPRIO(MINPRIO-MAXPRIO); for pending jobs (and jobs with
+              dependencies)
 """ % (getuser())
     options = [' More/Less ', 'reFresh rate', 'Group', 'Help',
                'Kill', 'Pause/Play', 'Quit', 'Reload', 'Clean']
