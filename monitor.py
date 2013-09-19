@@ -334,14 +334,14 @@ def color_bar(name, width=8):
     cnt = 0
     while cnt < lname:
         let = name[cnt]
-        if let.isupper():
+        if let.isupper() or let in ['-', '+']:
             out += '\033[7;30;4;41m' + let + '\033[m'
             cnt += 1
         else:
             out += '\033[7;30;43m'
             while cnt < lname:
                 let = name[cnt]
-                if let.isupper():
+                if let.isupper() or let in ['-', '+']:
                     break
                 out += let
                 cnt += 1
@@ -359,8 +359,8 @@ Help:
   * c: clean up users with no pending jobs
   * f: change refresh rate (minutes)
   * w: change width of the display (min 78)
-  * m: more info displayed
-  * l: less info displayed (more compact)
+  * +: more info displayed
+  * -: less info displayed (more compact)
   * g: group by a given element (implemented: TIMELIMIT)
   * k: kill list of jobs (only for user %s)
   * p: suspend/resume list of jobs
@@ -372,7 +372,7 @@ Reading time: time:~MEANTIME(.-MAXTIME)<LIMTIME, where, MEANTIME is the mean
 Reading prio: prio:MEANPRIO(MINPRIO-MAXPRIO); for pending jobs (and jobs with
               dependencies)
 """ % (getuser())
-    options = [' More/Less ', 'reFresh rate', 'Group', 'Help',
+    options = [' +/- info  ', 'reFresh rate', 'Group', 'Help',
                'Kill', 'Pause/Play', 'Quit', 'Reload', 'Clean']
     system('tput civis')
     getch = _Getch()
@@ -390,11 +390,11 @@ Reading prio: prio:MEANPRIO(MINPRIO-MAXPRIO); for pending jobs (and jobs with
             break
         elif s == 'h':
             print help_s
-        elif s == 'm':
-            opts.verbose += 1 if opts.verbose < 3 else 0
+        elif s == '+':
+            opts.verbose += 1 if opts.verbose < 2 else 0
             toreload  = False
             break
-        elif s == 'l':
+        elif s == '-':
             opts.verbose -= 1 if opts.verbose else 0
             toreload  = False
             break
@@ -645,7 +645,7 @@ class _GetchUnix:
                     # if we have an arrow
                     if ch == "\x1B":
                         stdin.read(2)
-                    continue
+                    return ch
             finally:
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
             return ch
