@@ -11,7 +11,7 @@ from string   import lowercase
 from time import sleep
 import os
 from optparse import OptionParser
-
+from subprocess import Popen, PIPE
 
 def main():
     opts = get_options()
@@ -26,6 +26,9 @@ def main():
     PATH = '/home/devel/fjserra/queue/jobs/'+array+'/'
     os.system('mkdir -p ' + PATH)
 
+    dep = -1
+    jobids = {}
+    previd = ''
     for i, cmd in enumerate(open(opts.infile)):
         i += 1
         if end:
@@ -46,6 +49,9 @@ def main():
             cmd, time  = ' '.join(cmds[:-1]), cmds[-1]
             name = str(i)
         else:
+            if opts.dependencies:
+                dep = int(cmds[-1])
+                cmds = cmds[:-1]
             try:
                 name = '_'.join(cmds[2:])[-25:]
             except:
@@ -63,14 +69,24 @@ def main():
         else:
             where = ''
         out.write(SCRIPT.format(name, i, cmd, time, PATH, cls, mem, where,
-                                opts.cpus))
+                                opts.cpus, array))
         out.close()
         if opts.norun:
             return
         if not i % 10:
             print 'pause...'
             sleep(1)
-        os.system('mnsubmit ' + PATH + 'lala_'+str(i)+'.cmd')
+        if opts.dependencies and dep > -1:
+            print jobids
+            dep = ' -dep ' + jobids[str(dep)]
+        else:
+            dep = ''
+        out, err = Popen('mnsubmit' + dep + ' ' + PATH + 'lala_'+str(i)+'.cmd',
+                         shell=True, stdout=PIPE, stderr=PIPE).communicate()
+        print err
+        if 'Submitted batch job' in out:
+            print 'ok', out
+            jobids[str(i-1)] = out.split()[-1]
 
 
 def get_options():
@@ -110,6 +126,9 @@ def get_options():
     parser.add_option('--injobname', action='store_true', dest='inname',
                       default=False, 
                       help='Name of the job in the input file (last arg).')
+    parser.add_option('--independencies', action='store_true', dest='dependencies',
+                      default=False, 
+                      help='line number of the job that current job will have to wait for (-1 if not dependent) (last arg).')
     parser.add_option('--time', action='store',
                       dest='time', default='20:00:00',
                       help='''[%default] Maximum run time alowed.''')
@@ -141,7 +160,7 @@ SCRIPT = """#!/bin/bash
 # Script to run Ecolopy in CNAG cluster.
 # It is used 8 nodes and 1 cpu per task.
 
-# @ job_name         = {0}_{1}
+# @ job_name         = {9}__{0}_{1}
 # @ initialdir       = {4}
 # @ output           = {4}{0}_{1}.out
 # @ error            = {4}{0}_{1}.err

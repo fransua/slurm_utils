@@ -10,12 +10,13 @@ from optparse   import OptionParser
 from os         import system
 from sys        import stdout, stdin
 from getpass    import getuser
-from time       import time, sleep
+from time       import time, sleep, mktime
 from select     import select
+from datetime   import datetime
 
 
 CMD = '/opt/perf/bin/squeue -o "%a %u %i %j %T %M %l %C %D %q %P %p %R"'
-
+CMDSACCT  = '/usr/local/bin/sacct -j %s --format JobId,State,Start,End -X -n'
 
 BEGTIME = time() # in the begining of time...
 
@@ -80,12 +81,24 @@ def print_stats(jobs, users, width=80, verbose=2, # jobsname=None,
         if groupby == 'TIMELIMIT' and not user=='total':
             groups = set([round_time(j) for j in userjobs])
             groups = sorted([t for t in groups])
+        elif groupby == 'NAME' and not user == 'total':
+            groups = set([userjobs[j]['NAME'].split('__')[0]
+                          for j in userjobs if '__' in userjobs[j]['NAME']])
+            if len(groups) == 0:
+                groups = ['']
+            groups = sorted([t for t in groups])
+        elif groupby == 'NAME' and user == 'total':
+            groups = ['']
+            groups = sorted([t for t in groups])
         else:
             groups = [None]
         for grp in groups:
-            if grp > -1:
+            if groupby == 'TIMELIMIT':
                 grpjobs = subjobs(userjobs, 'TIMELIMIT', grp,
                                   test=lambda x, y: totime(x) / TIME_ROUND == y)
+            elif groupby == 'NAME':
+                grpjobs = subjobs(userjobs, 'NAME', grp,
+                                  test=lambda x, y: x.startswith(y) if y > -1 else False)
             else:
                 grpjobs = userjobs
             paused = check_pause(grpjobs) if user!='total' else False
@@ -102,22 +115,28 @@ def print_stats(jobs, users, width=80, verbose=2, # jobsname=None,
             cmpling = subjobs(grpjobs, 'STATE'           , 'COMPLETING'  )
             pending = subjobs(grpjobs, 'STATE'           , 'PENDING'     )
             dependy = subjobs(grpjobs, 'NODELIST(REASON)', '(Dependency)')
-            doneing = subjobs(grpjobs, 'STATE'           , 'DONE'        )
+            doneing = subjobs(grpjobs, 'STATE'           , 'COMPLETED'   )
+            errored = subjobs(grpjobs, 'STATE'           , 'CANCELLED'   )
             #
             running = count_procs(running)
             cmpling = count_procs(cmpling)
             pending = count_procs(pending)
             dependy = count_procs(dependy)
             doneing = count_procs(doneing)
+            errored = count_procs(errored)
             #
-            avgtime = get_time(grpjobs, tround='m')
+            limtime = get_time(grpjobs, tround='m')
             maxtime = get_time(subjobs(grpjobs, 'STATE', 'RUNNING'),
                                kind='TIME', tround='m', calc='max')
-            runtime = get_time(subjobs(grpjobs, 'STATE', 'RUNNING'),
-                               kind='TIME', tround='m')
+            if user == getuser() and doneing: # if user is getuser and jobs already done
+                runtime = get_time(subjobs(grpjobs, 'STATE', 'COMPLETED'),
+                                   kind='SPENT', tround='m', fact=1)
+            else:
+                runtime = get_time(subjobs(grpjobs, 'STATE', 'RUNNING'),
+                                   kind='TIME', tround='m', fact=2)
             #
             avgprio = get_prio(grpjobs)
-            njobs = (running + pending + doneing + cmpling) or 1
+            njobs = (running + pending + doneing + cmpling + errored) or 1
             factor = float(width) / njobs
             name = '%-12s' % (user.upper())
             #cnt = int(log(running + pending)) if (running + pending) else 0
@@ -128,58 +147,65 @@ def print_stats(jobs, users, width=80, verbose=2, # jobsname=None,
             else:
                 name = name.lower()
             out += ''.join(name)
-            out += single_stats(running, pending, dependy, cmpling, doneing, 
-                                avgtime, runtime, maxtime, factor, grp, paused,
-                                avgprio, verbose)
+            out += single_stats(running, pending, dependy, cmpling, doneing,
+                                errored,
+                                limtime, runtime, maxtime, factor, grp, paused,
+                                avgprio, verbose, groupby)
     if not indices:
         system('clear')
         stdout.write(out)
     
 
-def single_stats(running, pending, dependy, cmpling, done, avgtime, runtime,
-                 maxtime, factor, grp, paused, avgprio, verbose):
+def single_stats(running, pending, dependy, cmpling, done, error, limtime,
+                 runtime, maxtime, factor, grp, paused, avgprio, verbose,
+                 groupby):
     """
     Returns one item (2 lines).
     """
     if verbose == 2:
         sprio = '|prio:%s(%s-%s)' % (str(round(avgprio[0]*1000, 3)),
-                                       str(round(avgprio[1]*1000, 3)),
-                                       str(round(avgprio[2]*1000, 3)))
+                                     str(round(avgprio[1]*1000, 3)),
+                                     str(round(avgprio[2]*1000, 3)))
     else:
         sprio = ''
     def get_bar(prio):
-        for s in '|' * (running + pending + dependy + cmpling + done - len(prio)-1) + prio + '|':
+        for s in '|' * (running + pending + dependy + cmpling + done +error - len(prio)-1) + prio + '|':
             yield s
     priobar = get_bar(sprio)
     out = ''
     if verbose == 2:
         out += ('run:\033[0;31m%-3s\033[m ' +
-                'compl:\033[0;35m%-2s\033[m ' + 
-                'pend:\033[0;33m%-5s\033[m ' + 
+                'cpl:\033[0;35m%-1s\033[m ' + 
+                'pen:\033[0;33m%-5s\033[m' + 
                 '(dep:\033[1;30m%-5s\033[m) ' + 
-                'end:\033[0;32m%-5s\033[m time:~%s(.-%s)' + 
-                '<%s\n') % (running, cmpling, pending, dependy, done,
-                            runtime, maxtime, avgtime)
+                'end:\033[0;32m%-5s\033[m' +
+                '(err:\033[0;34m%-3s\033[m) ' + 
+                'T:%-7s(.-%-7s)' + 
+                '<%s\n') % (running, cmpling, pending, dependy, done + error,
+                            error, runtime, maxtime, limtime)
     else:
         out += ('run:\033[0;31m%-3s\033[m ' +
-                'compl:\033[0;35m%-2s\033[m ' + 
-                'pend:\033[0;33m%-5s\033[m ' + 
+                'cpl:\033[0;35m%-1s\033[m ' + 
+                'pen:\033[0;33m%-5s\033[m' + 
                 '(dep:\033[1;30m%-5s\033[m) ' + 
-                'end:\033[0;32m%-5s\033[m time:~%s<%s'+
+                'end:\033[0;32m%-5s\033[m' +
+                '(err:\033[0;34m%-3s\033[m) ' + 
+                'T:%-7s<%-7s'+
                 ' prio:%s\n') % (
-            running, cmpling, pending, dependy, done, runtime, avgtime,
+            running, cmpling, pending, dependy, done + error, error, runtime, limtime,
             round(avgprio[2]*1000, 3))        
     if verbose:
         out += '%-12s' % (('  ~' + time2str(int(TIME_ROUND * (grp + 1.5)),
                                             tround='m'))
-                          if grp > -1 else '')
+                          if groupby == 'TIMELIMIT' else grp if groupby == 'NAME' else '')
         ## summing up remaining of floats and finding where to put it
         restr = ((factor * (running)           * 10)%10)/10
         restc = ((factor * (cmpling)           * 10)%10)/10
         restp = ((factor * (pending - dependy) * 10)%10)/10
         restd = ((factor * (dependy)           * 10)%10)/10
         restf = ((factor * (done)              * 10)%10)/10
-        most = max([i for i in enumerate([restr, restc, restp, restd, restf])],
+        reste = ((factor * (error)             * 10)%10)/10
+        most = max([i for i in enumerate([restr, restc, restp, restd, restf, reste])],
                    key=lambda x:x[1])[0]
         rest  = restr + restp + restd + restf
         running = int(factor * running             + (rest if most == 0 else 0))
@@ -187,12 +213,14 @@ def single_stats(running, pending, dependy, cmpling, done, avgtime, runtime,
         pending = int(factor * (pending - dependy) + (rest if most == 2 else 0))
         dependy = int(factor * dependy             + (rest if most == 3 else 0))
         done    = int(factor * done                + (rest if most == 4 else 0))
+        error   = int(factor * error               + (rest if most == 5 else 0))
         # print the bars
         out += (''.join(['\033[0;31m%s\033[m' % (priobar.next()) for i in xrange(running)]) +
                 ''.join(['\033[0;35m%s\033[m' % (priobar.next()) for i in xrange(cmpling)]) +
                 ''.join(['\033[0;33m%s\033[m' % (priobar.next()) for i in xrange(pending)]) +
                 ''.join(['\033[1;30m%s\033[m' % (priobar.next()) for i in xrange(dependy)]) +
-                ''.join(['\033[0;32m%s\033[m' % (priobar.next()) for i in xrange(done)])) + '\n'
+                ''.join(['\033[0;32m%s\033[m' % (priobar.next()) for i in xrange(done)   ]) +
+                ''.join(['\033[0;34m%s\033[m' % (priobar.next()) for i in xrange(error)  ])) + '\n'
         if verbose == 2:
             out += '\n'
     if paused:
@@ -238,11 +266,14 @@ def time2str(seconds, tround='s'):
     return '%s-%02d:%02d:%02d' % (days, hours, minutes, seconds)
 
 
-def get_time(jobs, kind='TIMELIMIT', tround='s', calc='avg'):
-    times = [totime(jobs[j][kind]) for j in jobs]
+def get_time(jobs, kind='TIMELIMIT', tround='s', calc='avg', fact=1):
+    if kind == 'SPENT':
+        times = [jobs[j][kind] for j in jobs]
+    else:
+        times = [totime(jobs[j][kind]) for j in jobs]
     try:
         if calc=='avg':
-            return time2str(int(float(sum(times)) / len(jobs)), tround)
+            return time2str(int(fact * float(sum(times)) / len(jobs)), tround)
         elif calc == 'max':
             if len(jobs):
                 return time2str(int(float(max(times))), tround)
@@ -288,7 +319,7 @@ def clean_done_users(jobs, users, groupby=None):
             cnt += count_procs(subjobs(grpjobs, 'STATE', 'PENDING'))
             if cnt:
                 continue
-            for j in subjobs(grpjobs, 'STATE', 'DONE'):
+            for j in subjobs(grpjobs, 'STATE', 'COMPLETED').keys() + subjobs(grpjobs, 'STATE', 'CANCELLED').keys():
                 del(jobs[j])
 
 
@@ -325,6 +356,7 @@ def color_str(chars, col):
     elif col == 'greygold':
         return '\033[7;30;43m' + chars + '\033[m'
 
+
 def color_bar(name, width=8):
     lname = len(name)
     out = ''
@@ -354,23 +386,33 @@ def console(opts, jobs, users):
     help_s = """
 Help:
 ******
-  * h: help
-  * r: reload
-  * c: clean up users with no pending jobs
-  * f: change refresh rate (minutes)
-  * w: change width of the display (min 78)
   * +: more info displayed
   * -: less info displayed (more compact)
+  * c: clean up users with no pending jobs
+  * f: change refresh rate (minutes)
   * g: group by a given element (implemented: TIMELIMIT)
+  * h: help
   * k: kill list of jobs (only for user %s)
+  * l: list jobs
   * p: suspend/resume list of jobs
   * q: quit
+  * r: reload
+  * w: change width of the display (min 78)
 
-Reading time: time:~MEANTIME(.-MAXTIME)<LIMTIME, where, MEANTIME is the mean
-              time of your running jobs; MAXTIME the time spent by your longest
-              job; and LIMTIME the mean time limit set.
-Reading prio: prio:MEANPRIO(MINPRIO-MAXPRIO); for pending jobs (and jobs with
-              dependencies)
+Abbreviations:
+ - run: running jobs
+ - cpl: completing jobs
+ - pen: pending jobs
+ - dep: pending jobs with dependencies
+ - end: finished jobs
+ - err: finished jobs with SLURM errors (e.g. out of memory)
+ - T  : time -> T:MEANTIME(.-MAXTIME)<LIMTIME, where, MEANTIME is either twice
+        the mean time of your running jobs, either the mean spent time of your
+        completed jobs (only for your jobs); MAXTIME the time spent by your
+        longest job; and LIMTIME the mean time limit set.
+- prio: priority-> prio:MEANPRIO(MINPRIO-MAXPRIO); for pending jobs (and
+        jobs with dependencies)
+        
 """ % (getuser())
     options = [' +/- info  ', 'reFresh rate', 'Group', 'Help',
                'Kill', 'Pause/Play', 'Quit', 'Reload', 'Clean']
@@ -390,6 +432,17 @@ Reading prio: prio:MEANPRIO(MINPRIO-MAXPRIO); for pending jobs (and jobs with
             break
         elif s == 'h':
             print help_s
+        elif s == 'l':
+            print '\n   %-8s %-30s %-10s %-4s %-10s %-10s' % ('JOBID', 'JOBNAME',
+                                                           'STATE', 'CPUS',
+                                                           'TIME', 'TIMELIMIT')
+            print '   ' + '-' * 76
+            for j in jobs:
+                if jobs[j]['USER'] != getuser():
+                    continue
+                print '   %-8s %-30s %-10s %-4s %-10s %-10s' % (
+                    jobs[j]['JOBID'], jobs[j]['NAME'] if len(jobs[j]['NAME'])<30 else jobs[j]['NAME'][:30], jobs[j]['STATE'],
+                    jobs[j]['CPUS'], jobs[j]['TIME'], jobs[j]['TIMELIMIT'])
         elif s == '+':
             opts.verbose += 1 if opts.verbose < 2 else 0
             toreload  = False
@@ -423,13 +476,22 @@ Reading prio: prio:MEANPRIO(MINPRIO-MAXPRIO); for pending jobs (and jobs with
                             '\033[7;30;4;41mT\033[m' +
                             '\033[7;30;43mime (%s minute precision)\033[m'
                             ) % (TIME_ROUND / 60)
+            print blanks + ('\033[7;30;43m \033[m' +
+                            '\033[7;30;4;41mN\033[m' +
+                            '\033[7;30;43mame (first part of job name, before "__")\033[m'
+                            )
             stdout.write(blanks + '\033[m' +
                          '\033[7;30;43m \033[m' +
-                         '\033[7;30;4;41mN\033[m' +
-                         '\033[7;30;43mothing\033[m')
+                         '\033[7;30;4;41mO\033[m' +
+                         '\033[7;30;43mly group by user name\033[m')
             stdout.flush()
             groupby = getch(opts.refresh).lower()
-            opts.groupby = 'TIMELIMIT' if groupby in ['t'] else None
+            if groupby == 't':
+                opts.groupby = 'TIMELIMIT'
+            elif groupby == 'n':
+                opts.groupby = 'NAME'
+            else:
+                opts.groupby = None
             if not groupby == 't':
                 toreload  = False
                 break
@@ -469,16 +531,34 @@ Reading prio: prio:MEANPRIO(MINPRIO-MAXPRIO); for pending jobs (and jobs with
             groups = list(print_stats(jobs, [getuser()], width=80,
                                       groupby=opts.groupby, indices=True,
                                       blanks=blanks, verbose=opts.verbose))
+            stdout.write(blanks +
+                         '\033[7;30;43m[\033[m' +
+                         '\033[7;30;4;41m x\033[m' +
+                         '\033[7;30;43m]     JobID\033[m\n')
+            stdout.write(blanks +
+                         '\033[7;30;43m[\033[m' +
+                         '\033[7;30;4;41m q\033[m' +
+                         '\033[7;30;43m]     Nothing\033[m\n')
+            stdout.flush()
             tokill = getch(opts.refresh).lower()
             stdout.flush()
+            if tokill.lower() == 'q':
+                toreload = False
+                break
+            if tokill == 'x':
+                jobid = raw_input('JobID of the job to kill: ')
             kill = raw_input('\n\n=====>  You selected to kill ' +
-                             '%s jobs occupying %s CPUs [y|n]: ' %
-                             (len(groups[int(tokill)]),
-                              count_procs(groups[int(tokill)])))
+                             '%s occupying %s CPUs [y|n]: ' %
+                             ('job: ' + jobid if tokill == 'x' else str(len(groups[int(tokill)])) + ' jobs',
+                              jobs[jobid]['CPUS'] if tokill == 'x' else count_procs(groups[int(tokill)])))
             if kill == 'y' or kill == 'yes':
                 print 'bang bang!'
+                if tokill == 'x':
+                    tokill = {jobid: None}
+                else:
+                    tokill = groups[int(tokill)]
                 try:
-                    kill_jobs(groups[int(tokill)])
+                    kill_jobs(tokill)
                 except ValueError:
                     print 'Integer needed...\n nothing done\n'
                     sleep(1)
@@ -500,20 +580,34 @@ Reading prio: prio:MEANPRIO(MINPRIO-MAXPRIO); for pending jobs (and jobs with
             groups = list(print_stats(jobs, [getuser()], width=80,
                                       groupby=opts.groupby, indices=True,
                                       blanks=blanks, verbose=opts.verbose))
+            stdout.write(blanks +
+                         '\033[7;30;43m[\033[m' +
+                         '\033[7;30;4;41m x\033[m' +
+                         '\033[7;30;43m]     JobID\033[m\n')
+            stdout.write(blanks +
+                         '\033[7;30;43m[\033[m' +
+                         '\033[7;30;4;41m q\033[m' +
+                         '\033[7;30;43m]     Nothing\033[m\n')
             topause = getch(opts.refresh).lower()
             stdout.flush()
+            if topause.lower() == 'q':
+                toreload = False
+                break
+            if topause == 'x':
+                jobid = raw_input('JobID of the job to Pause/Play: ')
             # system('tput cnorm')
             # topause = raw_input('\nEnter the "id_jobs" number to pause/' +
             #                     'suspend all corresponding jobs\n}:-> ')
+            topause = {jobid: jobs[jobid]} if topause == 'x' else groups[int(topause)]
             try:
-                pause = check_pause(groups[int(topause)])
+                pause = check_pause(topause)
             except ValueError:
-                print 'Integer needed...\n nothing done\n'
+                print 'Not found...\n nothing done\n'
                 sleep(1)
                 toreload  = False
                 break
             try:
-                pause_jobs(groups[int(topause)], pause)
+                pause_jobs(topause, pause)
             except IndexError:
                 print 'Not valid group number\n'
                 toreload  = False
@@ -529,6 +623,28 @@ Reading prio: prio:MEANPRIO(MINPRIO-MAXPRIO); for pending jobs (and jobs with
         return False
 
 
+def date_2_sec(date):
+    date, hour = date.split('T')
+    year, month, day = [int(d) for d in date.split('-')]
+    hour, minute, second = [int (h) for h in hour.split(':')]
+    return mktime(datetime(year, month, day, hour, minute, second).timetuple())
+
+
+def update_ended(jobs, ended):
+    if not ended:
+        return
+    table = Popen(CMDSACCT % (','.join(ended)), shell=True,
+                  stdout=PIPE).communicate()[0]
+    for line in table.split('\n'):
+        try:
+            print line
+            jobid, state, beg, end = line.split()
+        except ValueError:
+            continue
+        jobs[jobid]['SPENT'] = date_2_sec(end) - date_2_sec(beg)
+        jobs[jobid]['STATE'] = state.replace('+', '')
+
+
 def main():
     """
     main function
@@ -540,9 +656,17 @@ def main():
         try:
             if toreload:
                 for job in jobs:
-                    jobs[job]['STATE'] = 'DONE'
+                    jobs[job]['STATE'] = 'COMPLETED'
                     jobs[job]['NODELIST(REASON)'] = ''
                 jobs.update(get_list())
+                my_ended = []
+                for job in jobs:
+                    if jobs[job]['USER'] != getuser():
+                        continue
+                    if jobs[job]['STATE'] != 'COMPLETED':
+                        continue
+                    my_ended.append(job)
+                update_ended(jobs, my_ended)
             if opts.user != 'all':
                 users = [opts.user]
             else:
@@ -600,7 +724,7 @@ def get_options():
     opts.refresh = int(float(opts.refresh) * 60)
     opts.width = int(opts.width)
     opts.verbose = int(opts.verbose)
-    opts.groupby = 'TIMELIMIT' if opts.groupby=='time' else None
+    opts.groupby = 'TIMELIMIT' if opts.groupby == 'time' else 'NAME' if opts.groupby == 'name' else None
     return opts
 
 
@@ -664,9 +788,9 @@ class _GetchUnix:
 
 
 if __name__ == "__main__":
-    # exit(main())
-    try:
-        exit(main())
-    except Exception as e:
-        system('tput cnorm')
-        print 'ERROR:', e
+    exit(main())
+    # try:
+    #     exit(main())
+    # except Exception as e:
+    #     system('tput cnorm')
+    #     print 'ERROR:', e
