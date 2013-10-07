@@ -77,7 +77,6 @@ def main():
             print 'pause...'
             sleep(1)
         if opts.dependencies and dep > -1:
-            print jobids
             dep = ' -dep ' + jobids[str(dep)]
         else:
             dep = ''
