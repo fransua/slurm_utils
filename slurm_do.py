@@ -84,7 +84,7 @@ def main():
                          shell=True, stdout=PIPE, stderr=PIPE).communicate()
         print err
         if 'Submitted batch job' in out:
-            print 'ok', out
+            print 'ok', out.strip()
             jobids[str(i-1)] = out.split()[-1]
 
 

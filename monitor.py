@@ -7,19 +7,19 @@
 
 from subprocess import Popen, PIPE
 from optparse   import OptionParser
-from os         import system
 from sys        import stdout, stdin
 from getpass    import getuser
 from time       import time, sleep, mktime
 from select     import select
 from datetime   import datetime
 
+import os
 
 CMD = '/opt/perf/bin/squeue -o "%a %u %i %j %T %M %l %C %D %q %P %p %R"'
 CMDSACCT  = '/usr/local/bin/sacct -j %s --format JobId,State,Start,End -X -n'
 
 BEGTIME = time() # in the begining of time...
-
+AUTOWIDTH = True
 
 TIME_ROUND = 15000 # used to group jobs by time (600 corresponds to +- 5 min)
 
@@ -89,11 +89,10 @@ def print_stats(jobs, users, width=80, verbose=2, # jobsname=None,
             groups = sorted([t for t in groups])
         elif groupby == 'NAME' and user == 'total':
             groups = ['']
-            groups = sorted([t for t in groups])
         else:
             groups = [None]
         for grp in groups:
-            if groupby == 'TIMELIMIT':
+            if groupby == 'TIMELIMIT' and user!='total':
                 grpjobs = subjobs(userjobs, 'TIMELIMIT', grp,
                                   test=lambda x, y: totime(x) / TIME_ROUND == y)
             elif groupby == 'NAME':
@@ -103,12 +102,18 @@ def print_stats(jobs, users, width=80, verbose=2, # jobsname=None,
                 grpjobs = userjobs
             paused = check_pause(grpjobs) if user!='total' else False
             if indices and user!='total':
-                print blanks + ('\033[7;30;43m[\033[m' +
-                                '\033[7;30;4;41m%2s\033[m' +
-                                '\033[7;30;43m]%8s %s\033[m') % (
-                    indx, '~' + time2str(int(TIME_ROUND * (grp + 1.5)),
-                                         tround='m')
-                    if grp > -1 else 'ALL', '(paused)' if paused else '')
+                if groupby == 'TIMELIMIT':
+                    print blanks + ('\033[7;30;43m[\033[m' +
+                                    '\033[7;30;4;41m%2s\033[m' +
+                                    '\033[7;30;43m]%8s %s\033[m') % (
+                        indx, '~' + time2str(int(TIME_ROUND * (grp + 1.5)),
+                                             tround='m')
+                        if grp > -1 else 'ALL', '(paused)' if paused else '')
+                else:
+                    print blanks + ('\033[7;30;43m[\033[m' +
+                                    '\033[7;30;4;41m%2s\033[m' +
+                                    '\033[7;30;43m]%8s %s\033[m') % (
+                        indx, '~' + grp if grp > -1 else 'ALL', '(paused)' if paused else '')
                 indx += 1
                 yield grpjobs
             running = subjobs(grpjobs, 'STATE'           , 'RUNNING'     )
@@ -152,7 +157,7 @@ def print_stats(jobs, users, width=80, verbose=2, # jobsname=None,
                                 limtime, runtime, maxtime, factor, grp, paused,
                                 avgprio, verbose, groupby)
     if not indices:
-        system('clear')
+        os.system('clear')
         stdout.write(out)
     
 
@@ -195,9 +200,12 @@ def single_stats(running, pending, dependy, cmpling, done, error, limtime,
             running, cmpling, pending, dependy, done + error, error, runtime, limtime,
             round(avgprio[2]*1000, 3))        
     if verbose:
-        out += '%-12s' % (('  ~' + time2str(int(TIME_ROUND * (grp + 1.5)),
-                                            tround='m'))
-                          if groupby == 'TIMELIMIT' else grp if groupby == 'NAME' else '')
+        if grp > -1:
+            out += '%-12s' % (('  ~' + time2str(int(TIME_ROUND * (grp + 1.5)),
+                                                tround='m'))
+                              if groupby == 'TIMELIMIT' else grp if groupby == 'NAME' else '')
+        else:
+            out += ' ' * 12
         ## summing up remaining of floats and finding where to put it
         restr = ((factor * (running)           * 10)%10)/10
         restc = ((factor * (cmpling)           * 10)%10)/10
@@ -310,9 +318,12 @@ def clean_done_users(jobs, users, groupby=None):
         else:
             groups = [None]
         for grp in groups:
-            if grp > -1:
+            if groupby == 'TIMELIMIT' and user!='total':
                 grpjobs = subjobs(userjobs, 'TIMELIMIT', grp,
                                   test=lambda x, y: totime(x) / TIME_ROUND == y)
+            elif groupby == 'NAME':
+                grpjobs = subjobs(userjobs, 'NAME', grp,
+                                  test=lambda x, y: x.startswith(y) if y > -1 else False)
             else:
                 grpjobs = userjobs
             cnt  = count_procs(subjobs(grpjobs, 'STATE', 'RUNNING'))
@@ -383,6 +394,7 @@ def color_bar(name, width=8):
 
 def console(opts, jobs, users):
     global TIME_ROUND
+    global AUTOWIDTH
     help_s = """
 Help:
 ******
@@ -416,12 +428,12 @@ Abbreviations:
 """ % (getuser())
     options = [' +/- info  ', 'reFresh rate', 'Group', 'Help',
                'Kill', 'Pause/Play', 'Quit', 'Reload', 'Clean']
-    system('tput civis')
+    os.system('tput civis')
     getch = _Getch()
     toreload  = True
-    print ("\033[7;30;43m   \033[m" +
+    print ("\033[7;30;43m %s \033[m" % (" " * int((opts.width-81+1.5)/2)) +
            ("%s " * 8 + "%s") % tuple([color_bar(o) for o in sorted(options)]) +
-           "\033[7;30;43m  \033[m")
+           "\033[7;30;43m %s\033[m" %  (" " * int((opts.width-81+2)/2)))
     while True:
         s = getch(opts.refresh).lower()
         stdout.flush()
@@ -458,15 +470,20 @@ Abbreviations:
         elif s == 'q':
             raise KeyboardInterrupt
         elif s == 'w':
-            width = raw_input('new width (actual=%s): ' % opts.width)
+            width = raw_input('new width (actual=%s; minimum=82; "auto" for max available): ' % opts.width)
             try:
                 width = int(width)
+                AUTOWIDTH = False
             except ValueError:
-                print 'Integer needed...\n nothing done\n'
-                sleep(1)
-                toreload  = False
-                break
-            opts.width = 78 if width < 78 else width
+                if width == 'auto':
+                    width = getTerminalSize()[0] - 12
+                    AUTOWIDTH = True
+                else:
+                    print 'Integer needed...\n nothing done\n'
+                    sleep(1)
+                    toreload  = False
+                    break
+            opts.width = 82 if width < 82 else width
             toreload  = False
             break
         elif s == 'g':
@@ -483,7 +500,7 @@ Abbreviations:
             stdout.write(blanks + '\033[m' +
                          '\033[7;30;43m \033[m' +
                          '\033[7;30;4;41mO\033[m' +
-                         '\033[7;30;43mly group by user name\033[m')
+                         '\033[7;30;43mnly group by user name\033[m')
             stdout.flush()
             groupby = getch(opts.refresh).lower()
             if groupby == 't':
@@ -496,7 +513,7 @@ Abbreviations:
                 toreload  = False
                 break
             stdout.write('\r')
-            system('tput cnorm')
+            os.system('tput cnorm')
             time_round = raw_input(blanks + '   ' +
                                    '\033[7;30;43mGroup by time limit of' +
                                    '(actual=%s min):\033[m '
@@ -512,7 +529,7 @@ Abbreviations:
             toreload  = False
             break
         elif s == 'f':
-            system('tput cnorm')
+            os.system('tput cnorm')
             refresh = raw_input('new refresh rate (actual=' +
                                 '%s minutes): ' % (opts.refresh/60))
             try:
@@ -637,7 +654,6 @@ def update_ended(jobs, ended):
                   stdout=PIPE).communicate()[0]
     for line in table.split('\n'):
         try:
-            print line
             jobid, state, beg, end = line.split()
         except ValueError:
             continue
@@ -649,6 +665,7 @@ def main():
     """
     main function
     """
+    global AUTOWIDTH
     opts = get_options()
     jobs = {}
     toreload = True
@@ -672,6 +689,8 @@ def main():
             else:
                 users = sorted(list(set([jobs[j]['USER'] for j in jobs])))
             # put list here because of yield inside... not nice
+            if AUTOWIDTH:
+                opts.width = getTerminalSize()[0] - 12
             list(print_stats(jobs, users, width=opts.width,
                              # jobsname=opts.jobsname,
                              groupby=opts.groupby, verbose=opts.verbose))
@@ -681,14 +700,46 @@ def main():
         except KeyboardInterrupt:
             print '\nbye-bye %s ;)\n' % getuser()
             print bye()
-            system('tput cnorm')
+            os.system('tput cnorm')
             exit()
 
 
+def getTerminalSize():
+    env = os.environ
+    def ioctl_GWINSZ(fd):
+        try:
+            import fcntl, termios, struct
+            cr = struct.unpack('hh', fcntl.ioctl(fd, termios.TIOCGWINSZ,
+        '1234'))
+        except:
+            return
+        return cr
+    cr = ioctl_GWINSZ(0) or ioctl_GWINSZ(1) or ioctl_GWINSZ(2)
+    if not cr:
+        try:
+            fd = os.open(os.ctermid(), os.O_RDONLY)
+            cr = ioctl_GWINSZ(fd)
+            os.close(fd)
+        except:
+            pass
+    if not cr:
+        cr = (env.get('LINES', 25), env.get('COLUMNS', 80))
+
+        ### Use get(key[, default]) instead of a try/catch
+        #try:
+        #    cr = (env['LINES'], env['COLUMNS'])
+        #except:
+        #    cr = (25, 80)
+    return int(cr[1]), int(cr[0]) # width, height of the terminal
+
+    
 def get_options():
     '''
     parse option from call
     '''
+    # Prepare a default value for width
+    width, _ = getTerminalSize()
+    global AUTOWIDTH
     parser = OptionParser(
         usage="%prog [options] file [options [file ...]]",
         description="""\
@@ -713,7 +764,7 @@ def get_options():
                       dest='groupby',
                       help=('[%default] group user jobs by time limit ' +
                             '(groupby=time).'))
-    parser.add_option('--width', action='store', default=82,
+    parser.add_option('--width', action='store', default="auto (%s)" % (width - 12),
                       dest='width',
                       help='[%default] display width (should be > 80)')
     parser.add_option('--verbosity', action='store', default=2,
@@ -722,7 +773,15 @@ def get_options():
 
     opts = parser.parse_args()[0]
     opts.refresh = int(float(opts.refresh) * 60)
-    opts.width = int(opts.width)
+    try:
+        opts.width = int(opts.width)
+        AUTOWIDTH = False
+    except ValueError:
+        if opts.width.startswith('auto '):
+            opts.width = width - 12
+            AUTOWIDTH = True
+        else:
+            raise Exception("Bad width value passed.")
     opts.verbose = int(opts.verbose)
     opts.groupby = 'TIMELIMIT' if opts.groupby == 'time' else 'NAME' if opts.groupby == 'name' else None
     return opts
