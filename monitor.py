@@ -97,7 +97,7 @@ def print_stats(jobs, users, width=80, verbose=2, # jobsname=None,
                                   test=lambda x, y: totime(x) / TIME_ROUND == y)
             elif groupby == 'NAME':
                 grpjobs = subjobs(userjobs, 'NAME', grp,
-                                  test=lambda x, y: x.startswith(y) if y > -1 else False)
+                                  test=lambda x, y: x.split('__')[0]==y if '__' in x else True if y > -1 else False)
             else:
                 grpjobs = userjobs
             paused = check_pause(grpjobs) if user!='total' else False
@@ -122,13 +122,14 @@ def print_stats(jobs, users, width=80, verbose=2, # jobsname=None,
             dependy = subjobs(grpjobs, 'NODELIST(REASON)', '(Dependency)')
             doneing = subjobs(grpjobs, 'STATE'           , 'COMPLETED'   )
             errored = subjobs(grpjobs, 'STATE'           , 'CANCELLED'   )
+            failed  = subjobs(grpjobs, 'STATE'           , 'FAILED'      )
             #
             running = count_procs(running)
             cmpling = count_procs(cmpling)
             pending = count_procs(pending)
             dependy = count_procs(dependy)
             doneing = count_procs(doneing)
-            errored = count_procs(errored)
+            errored = count_procs(errored) + count_procs(failed)
             #
             limtime = get_time(grpjobs, tround='m')
             maxtime = get_time(subjobs(grpjobs, 'STATE', 'RUNNING'),
@@ -323,7 +324,7 @@ def clean_done_users(jobs, users, groupby=None):
                                   test=lambda x, y: totime(x) / TIME_ROUND == y)
             elif groupby == 'NAME':
                 grpjobs = subjobs(userjobs, 'NAME', grp,
-                                  test=lambda x, y: x.startswith(y) if y > -1 else False)
+                                  test=lambda x, y: x.split('__')[0]==y if '__' in x else True if y > -1 else False)
             else:
                 grpjobs = userjobs
             cnt  = count_procs(subjobs(grpjobs, 'STATE', 'RUNNING'))
@@ -405,7 +406,8 @@ Help:
   * g: group by a given element (implemented: TIMELIMIT)
   * h: help
   * k: kill list of jobs (only for user %s)
-  * l: list jobs
+  * l: list running jobs
+  * L: list all jobs
   * p: suspend/resume list of jobs
   * q: quit
   * r: reload
@@ -446,8 +448,21 @@ Abbreviations:
             print help_s
         elif s == 'l':
             print '\n   %-8s %-30s %-10s %-4s %-10s %-10s' % ('JOBID', 'JOBNAME',
-                                                           'STATE', 'CPUS',
-                                                           'TIME', 'TIMELIMIT')
+                                                              'STATE', 'CPUS',
+                                                              'TIME', 'TIMELIMIT')
+            print '   ' + '-' * 76
+            for j in jobs:
+                if jobs[j]['USER'] != getuser():
+                    continue
+                if jobs[j]['STATE'] != 'RUNNING':
+                    continue
+                print '   %-8s %-30s %-10s %-4s %-10s %-10s' % (
+                    jobs[j]['JOBID'], jobs[j]['NAME'] if len(jobs[j]['NAME'])<30 else jobs[j]['NAME'][:30], jobs[j]['STATE'],
+                    jobs[j]['CPUS'], jobs[j]['TIME'], jobs[j]['TIMELIMIT'])
+        elif s == 'L':
+            print '\n   %-8s %-30s %-10s %-4s %-10s %-10s' % ('JOBID', 'JOBNAME',
+                                                              'STATE', 'CPUS',
+                                                              'TIME', 'TIMELIMIT')
             print '   ' + '-' * 76
             for j in jobs:
                 if jobs[j]['USER'] != getuser():
@@ -743,7 +758,7 @@ def get_options():
     parser = OptionParser(
         usage="%prog [options] file [options [file ...]]",
         description="""\
-        for slurm
+        for slurm queue system
         """
         )
     parser.add_option('-u', dest='user', default=getuser(),
