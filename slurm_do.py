@@ -1,10 +1,4 @@
 #!/usr/bin/python
-"""
-INFILE:
-
-
-"""
-
 
 from random     import random
 from string     import lowercase
@@ -185,22 +179,43 @@ def get_options():
     parse option from call
     '''
     parser = OptionParser(
-        usage="%prog [options] file [options [file ...]]",
+        usage="%prog -i file [options]",
         description="""
-    ____________________________________________________________________________
-    |                                                                           |
-    |   Reads a list of jobs from input file and launch each in SLURM.          |  
-    |                                                                           |
-    |    * this script will not allow more than 1000 jobs to be PENDING, it     |
-    |      will wait until this number falls bellow 900 to continue launching   |
-    |                                                                           |
-    |    * information about dependencies, job names or execution time can be   |
-    |      specified inside the input file, at the end of each line, see help   |
-    |      for intime, injobname and independencies.                            | 
-    |                                                                           |
-    |    * each line should be built as follow:                                 | 
-    |        executable [args_for_executable]+ [maxtime] [jobname] [dependency] |
-    |___________________________________________________________________________|
+        :+-------------------------------------------------------------------------+  
+        :| Reads a list of jobs from input file and launch each in SLURM.          |`+
+        :|                                                                         | |
+        :|  * this script will not allow more than 1000 jobs to be PENDING, it     | |
+        :|    will wait until this number falls bellow 900 to continue launching   | |
+        :|                                                                         | |
+        :|  * information about dependencies, job names or execution time can be   | |
+        :|    specified inside the input file, at the end of each line, see help   | |
+        :|    for intime, injobname and independencies.                            | |
+        :|                                                                         | |
+        :|  * each line should be built as follow:                                 | |
+        :|      executable [args_for_executable]+ [maxtime] [jobname] [dependency] | |
+        :+-------------------------------------------------------------------------+ |
+        : `--------------/   /------------------------------------------------------`+
+        :               /   /                                                        
+        :              /   /                                                         
+        :             /   /                                                          
+        :            /   /                                                           
+        :           /   /                                                            
+        :          /   /                                                             
+        :         /   /                                                              
+        :        /   /                                                               
+        :       /   /                                                                
+        :      /   /                                                                 
+        :     /   /                                                                  
+        :    /   /                                                                         
+        :   /   /                                                                         
+        :  /   /                                                                         
+        : /   /                                                                         
+        :/   /                                                                         
+        :   /                                                                          
+        :  /                                                                           
+        : /                                                                            
+        :/                                                                            
+        :
         """
         )
     parser.add_option('-i', dest='infile', metavar="PATH", 
@@ -215,7 +230,8 @@ def get_options():
                             ' at which to stop'''))
     parser.add_option('--name', action='store',
                       dest='name', default=None,
-                      help='''[Random string] Name of the array job''')
+                      help=('[Random string] Name of the array job based on' +
+                            ' input file name'))
 
     parser.add_option('--dedicated', action='store_true', dest='dedicated',
                       default=False, help=('[%default] Use only dedicated ' +
@@ -248,7 +264,7 @@ def get_options():
                             '(last extra parameter)'))
     parser.add_option('--time', action='store',
                       dest='time', default='20:00:00',
-                      help='''[%default] Maximum run time alowed''')
+                      help='''[%default] Maximum run time allowed''')
     parser.add_option('--cpus', action='store',
                       dest='cpus', default='1',
                       help='''[%default] Number of CPUs per tasks''')
