@@ -24,18 +24,21 @@ GROUP   = Popen('/opt/perf/bin/sacctmgr list user', shell=True,
               stdout=PIPE).communicate()[0].split()[-2]
 GROUP   = GROUP[0].upper() + GROUP[1:-1] + GROUP[-1].upper()
 SCRIPT  = """\
-# @ job_name         = {9}__{0}_{1}
-# @ initialdir       = {4}
-# @ output           = {4}{0}_{1}.out
-# @ error            = {4}{0}_{1}.err
-# @ total_tasks      = 1
-# @ cpus_per_task    = {8}
-# @ wall_clock_limit = {3}
-# @ class            = {5}
-{7}
-{6}
+#!/bin/bash
 
-{2}
+# @ job_name         = {array}__{job_name}_{job_num}
+# @ initialdir       = {path}
+# @ output           = {path}{job_name}_{job_num}.out
+# @ error            = {path}{job_name}_{job_num}.err
+# @ total_tasks      = 1
+# @ cpus_per_task    = {cpus}
+# @ wall_clock_limit = {time}
+# @ class            = {cls}
+{requeuing}
+{memory}
+{group_info}
+
+{cmd}
 
 """
 WHERE   = """\
@@ -79,20 +82,25 @@ def big_sleep(intime, time):
 def main():
     opts = get_options()
     if not opts.name:
-        name = ''.join([lowercase[int(random()*26)] for _ in xrange(10)])
-        stdout.write('ARRAY NAME: %s\n' % name)
+        job_list = opts.infile.split('/')[-1].split('.')[0] + '_'
+        job_list = job_list + ''.join([lowercase[int(random()*26)]
+                                       for _ in xrange(10)])
     else:
-        name = opts.name
+        job_list = opts.name
 
     srt, end = int(opts.beg), int(opts.end)
 
-    PATH = LOGPATH % (name)
+    PATH = LOGPATH % (job_list)
     if not exists(PATH):
         mkdir(PATH)
 
+    stdout.write('JOB LIST NAME: %s\n' % job_list)
+    stdout.write(' Log stored in: %s\n\n' % PATH)
+    
     dep = -1
     jobids = {}
     jobnum = 1
+    total_jobs = len(open(opts.infile).readlines())
     for cmd in open(opts.infile):
         if end:
             if not (srt <= jobnum <= end):
@@ -119,7 +127,7 @@ def main():
             try:
                 name = '_'.join(cmds[2:])[-25:]
             except:
-                name = opts.name
+                name = job_list
             cmd  = ' '.join(cmds)
             time = opts.time
         name = name.replace('/', '_')
@@ -127,20 +135,24 @@ def main():
             name = '_' + name[1:]
         # define priority class
         cls = 'lowprio' if int(time.split(':')[0]) > 24 else 'normal'
+        # requeueing
+        req = '# @ requeue          = 1' if opts.requeue else ''
         # define memory
         mem = ('# @ memory           = ' + 
                '{}'.format(opts.memory) if opts.memory else '')
         # define group
-        if opts.group:
-            where = WHERE.format('Ex' if opts.exclusive else '',
-                                 'debug' if opts.debug else 'development',
+        if opts.dedicated or opts.exclusive:
+            where = WHERE.format('Ex' if opts.dedicated else '',
+                                 'debug' if opts.exclusive else 'development',
                                  GROUP)
         else:
             where = ''
         # write job script
         out = open(PATH + 'jobscript_'+str(jobnum)+'.cmd', 'w')
-        out.write(SCRIPT.format(name, jobnum, cmd, time, PATH, cls, mem, where,
-                                opts.cpus, name))
+        out.write(SCRIPT.format(array=job_list, job_name=name, job_num=jobnum,
+                                time=time, path=PATH, cls=cls, requeuing=req, 
+                                memory=mem, group_info=where, cpus=opts.cpus,
+                                cmd=cmd))
         out.close()
         # in case we just want to write jobs cripts
         if opts.norun:
@@ -163,7 +175,7 @@ def main():
         if err:
             stderr.write(err + '\n')
         if 'Submitted batch job' in out:
-            stdout.write('%5s ok %s\n' % (jobnum, out.strip()))
+            stdout.write('%s %5s/%-5s\n' % (out.strip(), jobnum, total_jobs))
             jobids[str(jobnum - 1)] = out.split()[-1]
         jobnum += 1
 
@@ -196,21 +208,25 @@ def get_options():
     parser.add_option('--start', action='store', 
                       dest='beg', default=0, 
                       help=('[first] line number (from command list file)' +
-                            ' at which to start.'''))
+                            ' at which to start'''))
     parser.add_option('--stop', action='store', 
                       dest='end', default=0, 
                       help=('[last] line number (from command list file)' +
-                            ' at which to stop.'''))
+                            ' at which to stop'''))
     parser.add_option('--name', action='store',
                       dest='name', default=None,
-                      help='''[Random string] Name of the array job.''')
+                      help='''[Random string] Name of the array job''')
+
+    parser.add_option('--dedicated', action='store_true', dest='dedicated',
+                      default=False, help=('[%default] Use only dedicated ' +
+                                           'nodes of group %s' % GROUP))
     parser.add_option('--exclusive', action='store_true', dest='exclusive',
-                      default=False, help=('[%default] Use only exclusive ' +
-                                           'nodes (ONLY with debug!!!).'))
-    parser.add_option('--groupnodes', action='store_true', dest='group',
-                      default=False, help='[%default] Use only group nodes.')
+                      default=False, 
+                      help=("[%default] " +
+                            "Use %s's exclusive or debug node" % GROUP))
+
     parser.add_option('--norun', action='store_true', dest='norun',
-                      default=False, help='[%default] Do not run mnsubmit.')
+                      default=False, help='[%default] Do not run mnsubmit')
     parser.add_option('--intime', action='store_true', dest='intime',
                       default=False, 
                       help=('[%default] Time specification in input file ' +
@@ -218,7 +234,11 @@ def get_options():
     parser.add_option('--injobname', action='store_true', dest='inname',
                       default=False, 
                       help=('[%default] Name of the job in the input file ' +
-                            '(second extra parameter).'))
+                            '(second extra parameter)'))
+    parser.add_option('--requeue', action='store_false', dest='requeue',
+                      default=True,
+                      help=('[%default] slurm will requeue the job if it ' +
+                            'died due to a node fail'))
     parser.add_option('--independencies', action='store_true',
                       dest='dependencies', default=False, 
                       help=('[%default] if called, the script will expect to ' +
@@ -228,25 +248,18 @@ def get_options():
                             '(last extra parameter)'))
     parser.add_option('--time', action='store',
                       dest='time', default='20:00:00',
-                      help='''[%default] Maximum run time alowed.''')
+                      help='''[%default] Maximum run time alowed''')
     parser.add_option('--cpus', action='store',
                       dest='cpus', default='1',
                       help='''[%default] Number of CPUs per tasks''')
-    parser.add_option('--debug', action='store_true', dest='debug',
-                      default=False, 
-                      help='[%default] Use debug queue, for testing.')
     parser.add_option('--memory', action='store',
                       dest='memory', default=None,
-                      help='''[5600] Amount of RAM required in Mb.''')
+                      help='''[5600] Amount of RAM required in Mb''')
 
     opts = parser.parse_args()[0]
     # complete
     if opts.exclusive:
-        opts.debug = True
-    if opts.debug:
-        opts.exclusive = True
-    if opts.exclusive:
-        opts.group = True
+        opts.dedicated = True
     if not opts.infile:
         exit(parser.print_help())
     opts.cpus = int(opts.cpus)
