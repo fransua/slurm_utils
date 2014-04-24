@@ -17,22 +17,25 @@ WHO     = getuser()
 GROUP   = Popen('/opt/perf/bin/sacctmgr list user', shell=True,
               stdout=PIPE).communicate()[0].split()[-2]
 GROUP   = GROUP[0].upper() + GROUP[1:-1] + GROUP[-1].upper()
+OUT = '{path}{job_name}_{job_num}.out'
+ERR = '{path}{job_name}_{job_num}.err'
+
 SCRIPT  = """\
 #!/bin/bash
 
-# @ job_name         = {array}__{job_name}_{job_num}
-# @ initialdir       = {path}
-# @ output           = {path}{job_name}_{job_num}.out
-# @ error            = {path}{job_name}_{job_num}.err
+# @ job_name         = {{array}}__{{job_name}}_{{job_num}}
+# @ initialdir       = {{path}}
+# @ output           = {out}
+# @ error            = {err}
 # @ total_tasks      = 1
-# @ cpus_per_task    = {cpus}
-# @ wall_clock_limit = {time}
-# @ class            = {cls}
-{requeuing}
-{memory}
-{group_info}
+# @ cpus_per_task    = {{cpus}}
+# @ wall_clock_limit = {{time}}
+# @ class            = {{cls}}
+{{requeuing}}
+{{memory}}
+{{group_info}}
 
-{cmd}
+{{cmd}}
 
 """
 WHERE   = """\
@@ -171,6 +174,9 @@ def main():
         if 'Submitted batch job' in out:
             stdout.write('%s %5s/%-5s\n' % (out.strip(), jobnum, total_jobs))
             jobids[str(jobnum - 1)] = out.split()[-1]
+            if opts.no_cmd:
+                Popen('rm -f ' + PATH + 'jobscript_'+ str(jobnum)+'.cmd',
+                      shell=True, stdout=PIPE, stderr=PIPE).communicate()
         jobnum += 1
 
 
@@ -241,6 +247,12 @@ def get_options():
                       help=("[%default] " +
                             "Use %s's exclusive or debug node" % GROUP))
 
+    parser.add_option('--no_out', action='store_true', dest='no_out',
+                      default=False, help='[%default] Do not store standard output')
+    parser.add_option('--no_err', action='store_true', dest='no_err',
+                      default=False, help='[%default] Do not store standard error')
+    parser.add_option('--no_cmd', action='store_true', dest='no_cmd',
+                      default=False, help='[%default] Remove cmd files once job is launched')
     parser.add_option('--norun', action='store_true', dest='norun',
                       default=False, help='[%default] Do not run mnsubmit')
     parser.add_option('--intime', action='store_true', dest='intime',
@@ -279,6 +291,9 @@ def get_options():
     if not opts.infile:
         exit(parser.print_help())
     opts.cpus = int(opts.cpus)
+    global SCRIPT
+    SCRIPT = SCRIPT.format(out=('/dev/null' if opts.no_out else OUT),
+                           err=('/dev/null' if opts.no_err else ERR))
     return opts
 
 

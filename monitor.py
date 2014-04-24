@@ -277,7 +277,7 @@ def time2str(seconds, tround='s'):
 
 def get_time(jobs, kind='TIMELIMIT', tround='s', calc='avg', fact=1):
     if kind == 'SPENT':
-        times = [jobs[j][kind] for j in jobs]
+        times = [jobs[j].get(kind, 0) for j in jobs]
     else:
         times = [totime(jobs[j][kind]) for j in jobs]
     try:
