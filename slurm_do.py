@@ -314,7 +314,7 @@ def get_options():
     #                   dest='memory', default=None,
     #                   help='''[5600] Amount of RAM required in Mb''')
 
-    opts = parser.parse_args()[0]
+    opts = parser.parse_args()
     global SCRIPT
     SCRIPT = SCRIPT.format(out=('/dev/null' if opts.no_out else OUT),
                            err=('/dev/null' if opts.no_err else ERR))
