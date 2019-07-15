@@ -17,8 +17,13 @@ from os         import mkdir
 # GLOBALS
 LOGPATH = expanduser('~') + '/queue/%s/'
 WHO     = getuser()
-GROUP   = Popen('sacctmgr list user', shell=True,
-              stdout=PIPE).communicate()[0].split()[-2]
+
+try:
+    GROUP   = Popen('sacctmgr list user', shell=True,
+                    stdout=PIPE, stderr=PIPE).communicate()[0].split()[-2]
+except IndexError:
+    exit("\nSLURM do:\n            -> by yourself a cluster first :)\n")
+
 GROUP   = GROUP[0].upper() + GROUP[1:-1] + GROUP[-1].upper()
 OUT = '{path}/{job_name}_{job_num}.out'
 ERR = '{path}/{job_name}_{job_num}.err'
@@ -34,6 +39,7 @@ SCRIPT  = """\
 #SBATCH --cpus-per-task={{cpus}}
 #SBATCH --time={{time}}
 #SBATCH --qos={{qos}}
+{{highmem}}
 {{requeuing}}
 
 {{group_info}}
@@ -146,9 +152,7 @@ def main():
         # req = '# @ requeue          = 1' if opts.requeue else ''
         # define memory
         req = ''
-        # mem = ('# @ memory           = ' +
-        #        '{}'.format(opts.memory) if opts.memory else '')
-        mem = ''
+        highmem = ('#SBATCH --constraint=highmem' if opts.highmem else '')
         # define group
         # if opts.dedicated or opts.exclusive:
         #     where = WHERE.format('Ex' if opts.exclusive else '',
@@ -162,7 +166,7 @@ def main():
         out = open(join(PATH, 'jobscript_'+str(jobnum)+'.cmd'), 'w')
         out.write(SCRIPT.format(array=job_list, job_name=name, job_num=jobnum,
                                 time=time, path=PATH, qos=qos, requeuing=req,
-                                memory=mem, group_info=where, cpus=cpus,
+                                highmem=highmem, group_info=where, cpus=cpus,
                                 cmd=cmd))
         out.close()
 
@@ -312,9 +316,9 @@ def get_options():
                           dest='wait_jobs', default=900, type=int,
                           help='[%(default)s] set the limit in number of jobs')
 
-    # parser.add_argument('--memory', action='store',
-    #                   dest='memory', default=None,
-    #                   help='''[5600] Amount of RAM required in Mb''')
+    job_args.add_argument('--high_memory', action='store_true',
+                          dest='highmem', default=False,
+                          help='''By default heach CPU has 2Gb of RAM memory, with this, it's 8Gb.''')
 
     opts = parser.parse_args()
     global SCRIPT
