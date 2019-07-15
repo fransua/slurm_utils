@@ -122,11 +122,11 @@ def main():
         cmds = cmd.split()
         if cmds[0].startswith('['):
             cmds[0] = cmds[0].replace(' ', '')[1:-1]
-            inagrs =  dict(c.split(':') for c in cmds[0].split(','))
-            time = inagrs.get('time', opts.time)
-            cpus = inagrs.get('cpus', opts.cpus)
-            depe = inagrs.get('depe', -1)
-            name = inagrs.get('name', '')
+            inargs =  dict(c.split(':') for c in cmds[0].split(','))
+            time = inargs.get('time', opts.time)
+            cpus = inargs.get('cpus', opts.cpus)
+            depe = int(inargs['depe']) if 'depe' in inargs else ''
+            name = inargs.get('name', '')
             cmd  = ' '.join(cmds[1:])
         else:
             name = ''
@@ -178,10 +178,11 @@ def main():
             sleep(1)
 
         # define dependencies (this is passed outside job script)
-        if depe > -1:
-            depe = ' -d ' + jobids[str(depe)]
-        else:
-            depe = ''
+        if depe != '':
+            if depe == -1:
+                depe = ' -d ' + jobids[str(jobnum - 2)]
+            else:
+                depe = ' -d ' + jobids[str(depe)]
 
         # submit
         out, err = Popen('sbatch' + depe + ' ' +
@@ -191,7 +192,8 @@ def main():
         if err:
             stderr.write(err + '\n')
         if 'Submitted batch job' in out:
-            stdout.write('%s %5s/%-5s\n' % (out.strip(), jobnum, total_jobs))
+            stdout.write('{:27} {:11} {:5}/{:<5}\n'.format(out.strip(), depe,
+                                                           jobnum, total_jobs))
             jobids[str(jobnum - 1)] = out.split()[-1]
             if opts.no_cmd:
                 Popen('rm -f ' + join(PATH, 'jobscript_'+ str(jobnum)+'.cmd'),
@@ -314,7 +316,7 @@ def get_options():
     #                   dest='memory', default=None,
     #                   help='''[5600] Amount of RAM required in Mb''')
 
-    opts = parser.parse_args()[0]
+    opts = parser.parse_args()
     global SCRIPT
     SCRIPT = SCRIPT.format(out=('/dev/null' if opts.no_out else OUT),
                            err=('/dev/null' if opts.no_err else ERR))
