@@ -18,38 +18,20 @@ from os         import mkdir
 LOGPATH = expanduser('~') + '/queue/%s/'
 WHO     = getuser()
 
-# try:
-#     GROUP   = Popen('sacctmgr list user', shell=True,
-#                     stdout=PIPE, stderr=PIPE).communicate()[0].split()[-2]
-# except IndexError:
-#     exit("\nSLURM do:\n            -> buy yourself a cluster first :)\n")
-
-# GROUP   = GROUP[0].upper() + GROUP[1:-1] + GROUP[-1].upper()
-OUT = '{path}/{job_name}_{job_num}.out'
-ERR = '{path}/{job_name}_{job_num}.err'
+OUT = '{path}/{job_name}{job_num}.out'
+ERR = '{path}/{job_name}{job_num}.err'
 
 SCRIPT  = """\
 #!/bin/bash
 
-#SBATCH --job-name="{{array}}__{{job_name}}_{{job_num}}"
-#SBATCH --chdir={{path}}
+#SBATCH --job-name="{{array}}__{{job_name}}{{job_num}}"
 #SBATCH --output={out}
 #SBATCH --error={err}
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task={{cpus}}
-#SBATCH --time={{time}}
-#SBATCH --qos={{qos}}
-{{highmem}}
-{{requeuing}}
-
-{{group_info}}
+{{extra}}
 
 {{cmd}}
 
-"""
-WHERE   = """# @ features         = {0}{2}
-# @ account          = {2}
-# @ partition        = {1}
 """
 ################################################################################
 
@@ -112,7 +94,7 @@ def main():
 
     for cmd in open(opts.infile):
         if end:
-            if not (srt <= jobnum <= end):
+            if not srt <= jobnum <= end:
                 jobnum += 1
                 continue
         # if multiple of 100, checks if there is not more than 900 pending jobs
@@ -124,55 +106,55 @@ def main():
             if not exists(PATH):
                 mkdir(PATH)
 
+        kwargs = {
+            'cpus-per-task': opts.cpus,
+            'chdir'        : opts.chdir if opts.chdir else PATH,
+            'time'         : opts.time,
+            'qos'          : opts.qos
+        }
+
         # parse command
-        cmds = cmd.split()
-        if cmds[0].startswith('['):
-            cmds[0] = cmds[0].replace(' ', '')[1:-1]
-            inargs =  dict(c.split(':') for c in cmds[0].split(';'))
-            time = inargs.get('time', opts.time)
-            cpus = inargs.get('cpus', opts.cpus)
-            depe = map(int, inargs['depe'].split(',')) if 'depe' in inargs else ''
-            name = inargs.get('name', '')
-            cmd  = ' '.join(cmds[1:])
-        else:
-            name = ''
-            cmd  = ' '.join(cmds)
-            time = opts.time
-            cpus = opts.cpus
+        name = ''
+        depe = ''
+        # and inside arguments
+        if cmd.startswith('['):
+            inargs =  dict(c.split(' ') for c in cmd[1:].split('] ')[0].strip().split(';'))
+            if 'depe' in inargs:
+                depe = map(int, inargs['depe'].split(','))
+                del inargs['depe']
+            if 'name' in inargs:
+                name = inargs.get('name', '') + '_'
+                del inargs['name']
+            cmd  = cmd.split(']')[1].strip()
+            kwargs.update(inargs)
 
-        name = name.replace('/', '_')
-        if name.startswith('-') or name.startswith('.') or name.startswith('+'):
-            name = '_' + name[1:]
         # define priority class
-        qos = opts.qos
-        if qos == 'debug' and int(time.split(':')[0]) > 2:
-            raise Exception('ERROR: changed to lowprio, too long job')
+        if kwargs['qos'] == 'debug' and int(kwargs['time'].split(':')[0]) > 2:
+            raise Exception('ERROR: changed to bsc_ls, too long job')
 
-        # # requeueing
-        # req = '# @ requeue          = 1' if opts.requeue else ''
         # define memory
-        req = ''
-        highmem = ('#SBATCH --constraint=highmem' if opts.highmem else '')
-        # define group
-        # if opts.dedicated or opts.exclusive:
-        #     where = WHERE.format('Ex' if opts.exclusive else '',
-        #                          'debug' if opts.exclusive else 'development',
-        #                          GROUP)
-        # elif opts.partition:
-        #     where = '# @ partition        = %s\n' % (opts.partition)
-        # else:
-        where = ''
+        if opts.highmem:
+            kwargs['constraint'] = 'highmem'
+
         # write job script
         out = open(join(PATH, 'jobscript_'+str(jobnum)+'.cmd'), 'w')
-        out.write(SCRIPT.format(array=job_list, job_name=name, job_num=jobnum,
-                                time=time, path=PATH, qos=qos, requeuing=req,
-                                highmem=highmem, group_info=where, cpus=cpus,
-                                cmd=cmd))
+
+        # create extra options from command line and internal
+        extra = ''.join('#SBATCH --{}={}\n'.format(k, kwargs[k]) for k in kwargs)
+
+        out.write(SCRIPT.format(path=PATH, array=job_list, job_name=name,
+                                job_num=jobnum, extra=extra, cmd=cmd))
         out.close()
+
+        # define dependencies (this is passed outside job script)
+        if depe != '':
+            depe = ' -d afterok:' + ':'.join(str(jobids[str(dep + jobnum * (dep < 0))])
+                                             for dep in depe)
 
         # in case we just want to write jobs cripts
         if opts.norun:
-            stdout.write('wrote cmd file %5s/%-5s\n' % (jobnum, total_jobs))
+            stdout.write('wrote cmd file {1:<4} {0:27} {1:5}/{2:<5}\n'.format(depe, jobnum, total_jobs))
+            jobids[str(jobnum)] = jobnum
             jobnum += 1
             continue
 
@@ -180,10 +162,6 @@ def main():
         if not jobnum % 10:
             stderr.write('pause...\n')
             sleep(1)
-
-        # define dependencies (this is passed outside job script)
-        if depe != '':
-            depe = ' -d afterok:' + ':'.join(str(dep + jobnum * (dep < 0)) for dep in depe)
 
         # submit
         out, err = Popen('sbatch' + depe + ' ' +
@@ -195,7 +173,7 @@ def main():
         if 'Submitted batch job' in out:
             stdout.write('{:27} {:11} {:5}/{:<5}\n'.format(out.strip(), depe,
                                                            jobnum, total_jobs))
-            jobids[str(jobnum - 1)] = out.split()[-1]
+            jobids[str(jobnum)] = out.split()[-1]
             if opts.no_cmd:
                 Popen('rm -f ' + join(PATH, 'jobscript_'+ str(jobnum)+'.cmd'),
                       shell=True, stdout=PIPE, stderr=PIPE).communicate()
@@ -210,32 +188,33 @@ def get_options():
         usage="%(prog)s -i file [options]",
         formatter_class=RawTextHelpFormatter,
         description="""
-    :+-------------------------------------------------------------------------+
-    :| Reads a list of jobs from input file and launch each in SLURM.          |`+
-    :|                                                                         | |
-    :|  * this script will not allow more than 1000 jobs to be PENDING, it     | |
-    :|    will wait until this number falls bellow 900 to continue launching   | |
-    :|                                                                         | |
-    :|  * information about dependencies, job names or execution time can be   | |
-    :|    specified inside the input file, at the startbeginning of each line, | |
-    :|    as: [name:joe_73;time:2:00:00;cpus:8;depe:-1,23]                     | |
-    :|                                                                         | |
-    :+-------------------------------------------------------------------------+ |
-    : `-------/   /-------------------------------------------------------------`+
-    :        /   /
-    :       /   /
-    :      /   /
-    :     /   /
-    :    /   /
-    :   /   /
-    :  /   /
-    : /   /
-    :/   /
-    :   /
-    :  /
-    : /
-    :/
-    :"""
+: :+-------------------------------------------------------------------------+
+: :| Reads a list of jobs from input file and launch each in SLURM.          |`+
+: :|                                                                         | |
+: :|  * this script will not allow more than 1000 jobs to be PENDING, it     | |
+: :|    will wait until this number falls bellow 900 to continue launching   | |
+: :|                                                                         | |
+: :|  * information about dependencies, job names or execution time can be   | |
+: :|    specified inside the input file, at the startbeginning of each line, | |
+: :|    as:                                                                  | |
+: :|      [name:joe_73;time:2:00:00;cpus-per-task:8;depe:-1,23] echo hola    | |
+: :|                                                                         | |
+: :+-------------------------------------------------------------------------+ |
+: : `-------/   /-------------------------------------------------------------`+
+: :        /   /
+: :       /   /
+: :      /   /
+: :     /   /
+: :    /   /
+: :   /   /
+: :  /   /
+: : /   /
+: :/   /
+: :   /
+: :  /
+: : /
+: :/
+: :"""
         )
 
     inp_args = parser.add_argument_group('Inputs')
@@ -259,15 +238,6 @@ def get_options():
                           help=('[Random string] Name of the array job based on'
                                 ' input file name'))
 
-    # parser.add_argument('--dedicated', action='store_true', dest='dedicated',
-    #                   default=False, help=('[%(default)s] Use only dedicated '
-    #                                        'nodes of group %s' % GROUP))
-
-    # parser.add_argument('--exclusive', action='store_true', dest='exclusive',
-    #                   default=False,
-    #                   help=("[%(default)s] "
-    #                         "Use %s's exclusive or debug node" % GROUP))
-
     choices = ['bsc_ls', 'debug']
     job_args.add_argument('--qos', dest='qos',
                           default='bsc_ls', choices=choices,
@@ -280,12 +250,15 @@ def get_options():
                               'died due to a node fail'))
 
     job_args.add_argument('--time', action='store',
-                          dest='time', default='20:00:00',
+                          dest='time', default='2:00:00',
                           help='''[%(default)s] Maximum run time allowed''')
 
     log_args.add_argument('--no_out', action='store_true', dest='no_out',
                           default=False, help='[%(default)s] Do not store '
                           'standard output')
+
+    job_args.add_argument('--chdir', dest='chdir', metavar="PATH",
+                          help='path from where to execute commands')
 
     log_args.add_argument('--no_err', action='store_true', dest='no_err',
                           default=False, help='[%(default)s] Do not store '
