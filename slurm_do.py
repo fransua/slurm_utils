@@ -17,9 +17,14 @@ from os         import mkdir
 # GLOBALS
 LOGPATH = expanduser('~') + '/queue/%s/'
 WHO     = getuser()
-GROUP   = Popen('sacctmgr list user', shell=True,
-              stdout=PIPE).communicate()[0].split()[-2]
-GROUP   = GROUP[0].upper() + GROUP[1:-1] + GROUP[-1].upper()
+
+# try:
+#     GROUP   = Popen('sacctmgr list user', shell=True,
+#                     stdout=PIPE, stderr=PIPE).communicate()[0].split()[-2]
+# except IndexError:
+#     exit("\nSLURM do:\n            -> buy yourself a cluster first :)\n")
+
+# GROUP   = GROUP[0].upper() + GROUP[1:-1] + GROUP[-1].upper()
 OUT = '{path}/{job_name}_{job_num}.out'
 ERR = '{path}/{job_name}_{job_num}.err'
 
@@ -34,6 +39,7 @@ SCRIPT  = """\
 #SBATCH --cpus-per-task={{cpus}}
 #SBATCH --time={{time}}
 #SBATCH --qos={{qos}}
+{{highmem}}
 {{requeuing}}
 
 {{group_info}}
@@ -122,10 +128,10 @@ def main():
         cmds = cmd.split()
         if cmds[0].startswith('['):
             cmds[0] = cmds[0].replace(' ', '')[1:-1]
-            inargs =  dict(c.split(':') for c in cmds[0].split(','))
+            inargs =  dict(c.split(':') for c in cmds[0].split(';'))
             time = inargs.get('time', opts.time)
             cpus = inargs.get('cpus', opts.cpus)
-            depe = int(inargs['depe']) if 'depe' in inargs else ''
+            depe = map(int, inargs['depe'].split(',')) if 'depe' in inargs else ''
             name = inargs.get('name', '')
             cmd  = ' '.join(cmds[1:])
         else:
@@ -146,9 +152,7 @@ def main():
         # req = '# @ requeue          = 1' if opts.requeue else ''
         # define memory
         req = ''
-        # mem = ('# @ memory           = ' +
-        #        '{}'.format(opts.memory) if opts.memory else '')
-        mem = ''
+        highmem = ('#SBATCH --constraint=highmem' if opts.highmem else '')
         # define group
         # if opts.dedicated or opts.exclusive:
         #     where = WHERE.format('Ex' if opts.exclusive else '',
@@ -162,7 +166,7 @@ def main():
         out = open(join(PATH, 'jobscript_'+str(jobnum)+'.cmd'), 'w')
         out.write(SCRIPT.format(array=job_list, job_name=name, job_num=jobnum,
                                 time=time, path=PATH, qos=qos, requeuing=req,
-                                memory=mem, group_info=where, cpus=cpus,
+                                highmem=highmem, group_info=where, cpus=cpus,
                                 cmd=cmd))
         out.close()
 
@@ -179,10 +183,7 @@ def main():
 
         # define dependencies (this is passed outside job script)
         if depe != '':
-            if depe == -1:
-                depe = ' -d ' + jobids[str(jobnum - 2)]
-            else:
-                depe = ' -d ' + jobids[str(depe)]
+            depe = ' -d afterok:' + ':'.join(str(dep + jobnum * (dep < 0)) for dep in depe)
 
         # submit
         out, err = Popen('sbatch' + depe + ' ' +
@@ -217,7 +218,7 @@ def get_options():
     :|                                                                         | |
     :|  * information about dependencies, job names or execution time can be   | |
     :|    specified inside the input file, at the startbeginning of each line, | |
-    :|    as: [name:joe_73,time:2:00:00,cpus:8,depe:23]                        | |
+    :|    as: [name:joe_73;time:2:00:00;cpus:8;depe:-1,23]                     | |
     :|                                                                         | |
     :+-------------------------------------------------------------------------+ |
     : `-------/   /-------------------------------------------------------------`+
@@ -312,9 +313,9 @@ def get_options():
                           dest='wait_jobs', default=900, type=int,
                           help='[%(default)s] set the limit in number of jobs')
 
-    # parser.add_argument('--memory', action='store',
-    #                   dest='memory', default=None,
-    #                   help='''[5600] Amount of RAM required in Mb''')
+    job_args.add_argument('--high_memory', action='store_true',
+                          dest='highmem', default=False,
+                          help='''By default heach CPU has 2Gb of RAM memory, with this, it's 8Gb!''')
 
     opts = parser.parse_args()
     global SCRIPT
