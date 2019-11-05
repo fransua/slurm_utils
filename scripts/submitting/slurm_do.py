@@ -35,22 +35,23 @@ SCRIPT  = """\
 """
 ################################################################################
 
-def count_jobs(how='PENDING'):
+def count_jobs(monitor_var='PENDING'):
     """
     Counts the number of pending jobs
     """
-    how = 'PENDING,RUNNING' if how =='RUNNING' else how
+    monitor_var = 'PENDING,RUNNING' if monitor_var =='RUNNING' else monitor_var
     cmd = 'squeue -o "%%u " -u %s -h -t %s | wc -l'
-    return int(Popen(cmd % (WHO, how),
+    return int(Popen(cmd % (WHO, monitor_var),
                      shell=True, stdout=PIPE).communicate()[0])
 
-def big_sleep(intime, time, how, wait_jobs):
+
+def big_sleep(intime, time, monitor_var, wait_jobs):
     """
     checks if there is not more than 900 pending jobs
     otherwise, waits.
     """
     firstpause = True
-    while count_jobs(how) > wait_jobs:
+    while count_jobs(monitor_var) > wait_jobs:
         if firstpause:
             stderr.write('-' * 37)
             stderr.write('> Big pause')
@@ -66,6 +67,7 @@ def big_sleep(intime, time, how, wait_jobs):
                        enumerate(time.split(':'))]) / 20)
     if not firstpause:
         stdout.write('\n')
+
 
 def main():
     opts = get_options()
@@ -97,14 +99,6 @@ def main():
             if not srt <= jobnum <= end:
                 jobnum += 1
                 continue
-        # if multiple of 100, checks if there is not more than 900 pending jobs
-        # otherwise, waits
-        if not jobnum % 100:
-            PATH = LOGPATH % (job_list)
-            big_sleep(opts.intime, opts.time, opts.how, opts.wait_jobs)
-            PATH = join(PATH, '%04d' % (jobnum/100))
-            if not exists(PATH):
-                mkdir(PATH)
 
         kwargs = {
             'cpus-per-task': opts.cpus,
@@ -116,6 +110,7 @@ def main():
         # parse command
         name = ''
         depe = ''
+        inargs = {}
         # and inside arguments
         if cmd.startswith('['):
             inargs =  dict(c.split(' ') for c in cmd[1:].split('] ')[0].strip().split(';'))
@@ -127,6 +122,15 @@ def main():
                 del inargs['name']
             cmd  = cmd.split(']')[1].strip()
             kwargs.update(inargs)
+
+        # if multiple of 100, checks if there is not more than 900 pending jobs
+        # otherwise, waits
+        if not jobnum % 100:
+            PATH = LOGPATH % (job_list)
+            big_sleep('time' in inargs, kwargs['time'], opts.monitor_var, opts.wait_jobs)
+            PATH = join(PATH, '%04d' % (jobnum/100))
+            if not exists(PATH):
+                mkdir(PATH)
 
         # define priority class
         if kwargs['qos'] == 'debug' and int(kwargs['time'].split(':')[0]) > 2:
@@ -197,7 +201,7 @@ def get_options():
 : :|  * information about dependencies, job names or execution time can be   | |
 : :|    specified inside the input file, at the startbeginning of each line, | |
 : :|    as:                                                                  | |
-: :|      [name:joe_73;time:2:00:00;cpus-per-task:8;depe:-1,23] echo hola    | |
+: :|      [name joe_73;time 2:00:00;cpus-per-task 8;depe -1,23] echo hola    | |
 : :|                                                                         | |
 : :+-------------------------------------------------------------------------+ |
 : : `-------/   /-------------------------------------------------------------`+
@@ -277,7 +281,7 @@ def get_options():
                           help='''[%(default)s] Number of CPUs per tasks''')
 
     exe_args.add_argument('--monitor', action='store',
-                          dest='how', default='PENDING',
+                          dest='monitor_var', default='PENDING',
                           choices=['PENDING', 'RUNNING'],
                           help='[%(default)s] monitor running or pending jobs '
                           'to limit launches')
