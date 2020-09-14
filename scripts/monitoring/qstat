@@ -1,6 +1,6 @@
 #!/bin/bash
 
-MAXNAMELENGTH=45
+MAXNAMELENGTH=60
 
 
-sacct --starttime `date +"%Y-%m-%d" --date='-1 month'` --format=JobID,JobName%${MAXNAMELENGTH},QOS,Elapsed,Time,NCPUS%3,NNodes%3,NodeList,Priority,End%22,State -s PD,R -X $@
+sacct --starttime `date +"%Y-%m-%d" --date='-1 month'` --format=JobID,JobName%${MAXNAMELENGTH},QOS,Elapsed,Time,NCPUS%3,NNodes%3,NodeList,Priority,State -s PD,R -X $@

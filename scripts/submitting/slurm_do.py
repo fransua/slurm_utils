@@ -1,27 +1,27 @@
 #! /usr/bin/env python
 
-from random     import random
+from random import random
 try:
     from string import lowercase
 except ImportError:
     from string import ascii_lowercase as lowercase
-from time       import sleep
-from argparse   import ArgumentParser, RawTextHelpFormatter
+from time import sleep
+from argparse import ArgumentParser, RawTextHelpFormatter
 from subprocess import Popen, PIPE
-from getpass    import getuser
-from sys        import stdout, stderr
-from os.path    import exists, expanduser, join
-from os         import mkdir
+from getpass import getuser
+from sys import stdout, stderr
+from os.path import exists, expanduser, join
+from os import mkdir
 
 ################################################################################
 # GLOBALS
 LOGPATH = expanduser('~') + '/queue/%s/'
-WHO     = getuser()
+WHO = getuser()
 
 OUT = '{path}/{job_name}{job_num}.out'
 ERR = '{path}/{job_name}{job_num}.err'
 
-SCRIPT  = """\
+SCRIPT = """\
 #!/bin/bash
 
 #SBATCH --job-name="{{array}}__{{job_name}}{{job_num}}"
@@ -35,11 +35,12 @@ SCRIPT  = """\
 """
 ################################################################################
 
+
 def count_jobs(monitor_var='PENDING'):
     """
     Counts the number of pending jobs
     """
-    monitor_var = 'PENDING,RUNNING' if monitor_var =='RUNNING' else monitor_var
+    monitor_var = 'PENDING,RUNNING' if monitor_var == 'RUNNING' else monitor_var
     cmd = 'squeue -o "%%u " -u %s -h -t %s | wc -l'
     return int(Popen(cmd % (WHO, monitor_var),
                      shell=True, stdout=PIPE).communicate()[0])
@@ -63,7 +64,7 @@ def big_sleep(intime, time, monitor_var, wait_jobs):
             sleep(600)
         else:
             # wait one 20th of the maxtime set.
-            sleep(sum([60**(2-i)*int(j) for i, j in
+            sleep(sum([60**(2 - i)*int(j) for i, j in
                        enumerate(time.split(':'))]) / 20)
     if not firstpause:
         stdout.write('\n')
@@ -71,14 +72,22 @@ def big_sleep(intime, time, monitor_var, wait_jobs):
 
 def main():
     opts = get_options()
+
+    if opts.command:
+        infile = "command"
+        commands = [opts.command]
+    else:
+        infile = opts.infile
+        commands = list(open(infile, 'r').readlines())
+
     if not opts.name:
-        job_list = opts.infile.split('/')[-1].split('.')[0] + '_'
+        job_list = infile.split('/')[-1].split('.')[0] + '_'
         job_list = job_list + ''.join([lowercase[int(random()*26)]
                                        for _ in range(10)])
     else:
         job_list = opts.name
 
-    srt, end = int(opts.beg), int(opts.end)
+    beg, end = int(opts.beg), int(opts.end)
 
     PATH = LOGPATH % (job_list)
     if not exists(PATH):
@@ -90,21 +99,27 @@ def main():
     stdout.write('JOB LIST NAME: %s\n' % job_list)
     stdout.write(' Log stored in: %s\n\n' % PATH)
 
+    # clean commands:
+    commands = [c for c in commands if c]
+
     jobids = {}
     jobnum = 1
-    total_jobs = len(open(opts.infile).readlines())
+    total_jobs = len(commands)
 
-    for cmd in open(opts.infile):
+    job = 0
+    for job in range(0, len(commands) + opts.group, opts.group):
+        cmds = commands[job: job + opts.group]
+        job += opts.group
         if end:
-            if not srt <= jobnum <= end:
+            if not beg <= jobnum <= end:
                 jobnum += 1
                 continue
 
         kwargs = {
             'cpus-per-task': opts.cpus,
-            'chdir'        : opts.chdir if opts.chdir else PATH,
-            'time'         : opts.time,
-            'qos'          : opts.qos
+            'chdir': opts.chdir if opts.chdir else PATH,
+            'time': opts.time,
+            'qos': opts.qos
         }
 
         # parse command
@@ -112,23 +127,33 @@ def main():
         depe = ''
         inargs = {}
         # and inside arguments
-        if cmd.startswith('['):
-            inargs =  dict(c.split(' ') for c in cmd[1:].split('] ')[0].strip().split(';'))
-            if 'depe' in inargs:
-                depe = map(int, inargs['depe'].split(','))
-                del inargs['depe']
-            if 'name' in inargs:
-                name = inargs.get('name', '') + '_'
-                del inargs['name']
-            cmd  = cmd.split(']')[1].strip()
-            kwargs.update(inargs)
+        tmp_cmds = []
+        for cmd in cmds:
+            if cmd.startswith('['):
+                inargs = dict(c.split(' ')
+                              for c in cmd[1:].split('] ')[0].strip().split(';'))
+                if 'depe' in inargs:
+                    depe = map(int, inargs['depe'].split(','))
+                    del inargs['depe']
+                if 'name' in inargs:
+                    name = inargs.get('name', '') + '_'
+                    del inargs['name']
+                kwargs.update(inargs)
+                tmp_cmds.append(cmd.split(']')[1].strip())
+            else:
+                tmp_cmds.append(cmd.strip())
+        cmds = tmp_cmds
+
+        if opts.parallel:
+            cmds = [cmd + '&' for cmd in cmds]
 
         # if multiple of 100, checks if there is not more than 900 pending jobs
         # otherwise, waits
         if not jobnum % 100:
             PATH = LOGPATH % (job_list)
-            big_sleep('time' in inargs, kwargs['time'], opts.monitor_var, opts.wait_jobs)
-            PATH = join(PATH, '%04d' % (jobnum/100))
+            big_sleep('time' in inargs,
+                      kwargs['time'], opts.monitor_var, opts.wait_jobs)
+            PATH = join(PATH, '%04d' % (jobnum / 100))
             if not exists(PATH):
                 mkdir(PATH)
 
@@ -144,10 +169,11 @@ def main():
         out = open(join(PATH, 'jobscript_'+str(jobnum)+'.cmd'), 'w')
 
         # create extra options from command line and internal
-        extra = ''.join('#SBATCH --{}={}\n'.format(k, kwargs[k]) for k in kwargs)
+        extra = ''.join('#SBATCH --{}={}\n'.format(k,
+                                                   kwargs[k]) for k in kwargs)
 
         out.write(SCRIPT.format(path=PATH, array=job_list, job_name=name,
-                                job_num=jobnum, extra=extra, cmd=cmd))
+                                job_num=jobnum, extra=extra, cmd='\n'.join(cmds)))
         out.close()
 
         # define dependencies (this is passed outside job script)
@@ -157,7 +183,8 @@ def main():
 
         # in case we just want to write jobs cripts
         if opts.norun:
-            stdout.write('wrote cmd file {1:<4} {0:27} {1:5}/{2:<5}\n'.format(depe, jobnum, total_jobs))
+            stdout.write('wrote cmd file {1:<4} {0:27} {1:5}/{2:<5}\n'.format(
+                depe, jobnum, total_jobs))
             jobids[str(jobnum)] = jobnum
             jobnum += 1
             continue
@@ -169,17 +196,17 @@ def main():
 
         # submit
         out, err = Popen('sbatch' + depe + ' ' +
-                         join(PATH, 'jobscript_'+ str(jobnum)+'.cmd'),
+                         join(PATH, 'jobscript_' + str(jobnum)+'.cmd'),
                          shell=True, stdout=PIPE, stderr=PIPE).communicate()
         # writes submission info
         if err:
             stderr.write(err + '\n')
-        if 'Submitted batch job' in out:
-            stdout.write('{:27} {:11} {:5}/{:<5}\n'.format(out.strip(), depe,
-                                                           jobnum, total_jobs))
+        if b'Submitted batch job' in out:
+            stdout.write('{:27} {:11} {:5}/{:<5}\n'.format(
+                str(out.strip()), depe, jobnum, total_jobs // opts.group + 1))
             jobids[str(jobnum)] = out.split()[-1]
             if opts.no_cmd:
-                Popen('rm -f ' + join(PATH, 'jobscript_'+ str(jobnum)+'.cmd'),
+                Popen('rm -f ' + join(PATH, 'jobscript_' + str(jobnum)+'.cmd'),
                       shell=True, stdout=PIPE, stderr=PIPE).communicate()
         jobnum += 1
 
@@ -219,7 +246,7 @@ def get_options():
 : : /
 : :/
 : :"""
-        )
+    )
 
     inp_args = parser.add_argument_group('Inputs')
     job_args = parser.add_argument_group('Job features')
@@ -227,7 +254,9 @@ def get_options():
     log_args = parser.add_argument_group('Logging')
 
     inp_args.add_argument('-i', dest='infile', metavar="PATH",
-                          help='path to command list file', required=True)
+                          help='path to command list file')
+    inp_args.add_argument('-c', dest='command', metavar="STR",
+                          help='quoted command (e.g. "sleep 132y")')
     inp_args.add_argument('--start', action='store',
                           dest='beg', default=0,
                           help=('[first] line number (from command list file)'
@@ -237,7 +266,7 @@ def get_options():
                           help=('[last] line number (from command list file)'
                                 ' at which to stop'''))
 
-    job_args.add_argument('--name', action='store',
+    job_args.add_argument('-n', '--name', action='store',
                           dest='name', default=None,
                           help=('[Random string] Name of the array job based on'
                                 ' input file name'))
@@ -251,11 +280,15 @@ def get_options():
     job_args.add_argument('--requeue', action='store_false', dest='requeue',
                           default=True,
                           help=('[%(default)s] slurm will requeue the job if it '
-                              'died due to a node fail'))
+                                'died due to a node fail'))
 
-    job_args.add_argument('--time', action='store',
+    job_args.add_argument('-t', '--time', action='store',
                           dest='time', default='2:00:00',
                           help='''[%(default)s] Maximum run time allowed''')
+
+    job_args.add_argument('--mem', action='store',
+                          dest='mem', default=None,
+                          help='''[%(default)s] Maximum memory to use''')
 
     log_args.add_argument('--no_out', action='store_true', dest='no_out',
                           default=False, help='[%(default)s] Do not store '
@@ -286,6 +319,14 @@ def get_options():
                           help='[%(default)s] monitor running or pending jobs '
                           'to limit launches')
 
+    exe_args.add_argument('--group', action='store',
+                          dest='group', default=1, type=int,
+                          help='[%(default)s] number of tasks (lines in input file) per job')
+
+    exe_args.add_argument('--parallel', action='store_true',
+                          dest='parallel', default=False,
+                          help='Runs in parallel (adds &)')
+
     exe_args.add_argument('--wait_jobs', action='store', metavar='INT',
                           dest='wait_jobs', default=900, type=int,
                           help='[%(default)s] set the limit in number of jobs')
@@ -298,6 +339,12 @@ def get_options():
     global SCRIPT
     SCRIPT = SCRIPT.format(out=('/dev/null' if opts.no_out else OUT),
                            err=('/dev/null' if opts.no_err else ERR))
+
+    if opts.infile and opts.command:
+        raise Exception('ERROR: use only one of -i or -c')
+    if not opts.infile and not opts.command:
+        raise Exception('ERROR: need commands, use at least one of -i or -c')
+
     return opts
 
 
