@@ -55,14 +55,14 @@ def main():
     qpath = "{}/queue/{}".format(os.path.expanduser('~'), opts.job_name)
     total = sum(1 for _ in open(opts.fname))
     fh_jobs = open(opts.fname)
-    for ngreasy in range(1, total // (opts.ntasks * opts.jobs_per_task) + 1 +
-                         (total % (opts.ntasks * opts.jobs_per_task) != 0)):
+    for ngreasy in range(1, total // (opts.ntasks * opts.jobs_per_greasy) + 1 +
+                         (total % (opts.ntasks * opts.jobs_per_greasy) != 0)):
         gpath = os.path.join(qpath, "greasy_{:03}".format(ngreasy))
         if not os.path.exists(gpath):
             os.mkdir(gpath)
         greasy_fname = os.path.join(gpath, "greasy_cmds_{}.txt".format(ngreasy))
         greasy_list = open(greasy_fname, "w")
-        for _ in range(opts.ntasks * opts.jobs_per_task):
+        for _ in range(opts.ntasks * opts.jobs_per_greasy):
             try:
                 job = next(fh_jobs)
             except StopIteration:
@@ -94,6 +94,7 @@ def main():
             "sbatch {}".format(os.path.join(gpath, "greasy_{}.cmd".format(ngreasy)))
         )
         if not ngreasy % 10:
+            print('give slurm some rest....')
             sleep(2)
 
 
@@ -136,17 +137,16 @@ def get_options():
         type=int,
         default=144,
         metavar="INT",
-        help="[%(default)s] number of tasks per greasy job",
+        help="[%(default)s] number of simultaneous tasks in a greasy",
     )
 
     parser.add_argument(
         "-j",
-        "--jobs_per_task",
+        "--jobs_per_greasy",
         type=int,
         default=4,
         metavar="INT",
-        help="""[%(default)s] number of cpus allocated per task (and thus per
-        job, as jobs run one after the other in the same task)""",
+        help="""[%(default)s] number of jobs per greasy""",
     )
 
     parser.add_argument(
